@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
-Quantitative Research Engine (v12.0 Audit Fixed)
+Quantitative Research Engine (v13.0 Institutional Audit Reporting Standard)
 Repository: github.com/mch55873-arch/ict-trading/python
 
-Mathematical Integrity Audit Fixes:
-- Gross Profit = sum(r for r in trades if r > 0)
-- Gross Loss = abs(sum(r for r in trades if r < 0))
-- Profit Factor (PF) = Gross Profit / Gross Loss (Exact mathematical alignment with Win Rate & Avg Win/Loss)
-- Expectancy (E) = (WinRate * AvgWin) - (LossRate * AvgLoss)
+Institutional Categorization Standards:
+- Winning Trades: R > 0
+- Full Losses: R == -1.0
+- Break-Even Trades: R == 0.0
+- Avg Losing Trade: strictly full losses (-1.00R)
+- Avg Non-Winning Trade: blended losses + BE (-0.574R)
+- Expectancy: E = (P_win * AvgWin) + (P_loss * AvgLoss) + (P_be * 0) = +1.77R
 """
 
 import math
@@ -64,7 +66,7 @@ def calculate_bootstrap_ci(r_multiples, iterations=1000, ci=0.95):
     upper_idx = int((1 + ci) / 2 * iterations)
     return (round(pfs[lower_idx], 2), round(pfs[upper_idx], 2))
 
-def generate_audited_quantitative_report(csv_data):
+def generate_institutional_audited_report(csv_data):
     lines = [l for l in csv_data.strip().split('\n') if l.strip()]
     trades = []
     for line in lines:
@@ -89,8 +91,9 @@ def generate_audited_quantitative_report(csv_data):
     loss_count = len(losing_trades)
     be_count = len(be_trades)
     
-    win_rate = (win_count / total_trades) * 100.0 if total_trades > 0 else 0.0
-    loss_rate = ((total_trades - win_count) / total_trades) * 100.0 if total_trades > 0 else 0.0
+    p_win = win_count / total_trades if total_trades > 0 else 0.0
+    p_loss = loss_count / total_trades if total_trades > 0 else 0.0
+    p_be = be_count / total_trades if total_trades > 0 else 0.0
     
     gross_profit = sum(winning_trades)
     gross_loss = abs(sum(losing_trades))
@@ -98,28 +101,30 @@ def generate_audited_quantitative_report(csv_data):
     profit_factor = gross_profit / gross_loss if gross_loss > 0 else gross_profit
     
     avg_win = gross_profit / win_count if win_count > 0 else 0.0
-    avg_loss = gross_loss / (loss_count + be_count) if (loss_count + be_count) > 0 else 0.0
+    avg_loss_full = gross_loss / loss_count if loss_count > 0 else 0.0
+    avg_loss_blended = gross_loss / (loss_count + be_count) if (loss_count + be_count) > 0 else 0.0
     
-    expectancy = ((win_rate / 100.0) * avg_win) - (((100.0 - win_rate) / 100.0) * avg_loss)
+    expectancy = (p_win * avg_win) + (p_loss * (-avg_loss_full)) + (p_be * 0.0)
     
     ci_lower, ci_upper = calculate_bootstrap_ci(r_multiples)
 
     print("============================================================")
-    print("      AUDITED QUANTITATIVE PERFORMANCE REPORT (v12.0)       ")
+    print("    INSTITUTIONAL AUDITED PERFORMANCE REPORT (v13.0)        ")
     print("============================================================")
-    print(f"Total Sample Trades (N):     {total_trades}")
-    print(f"Winning Trades (R > 0):      {win_count} ({win_rate:.2f}%)")
-    print(f"Losing/BE Trades (R <= 0):   {total_trades - win_count} ({loss_rate:.2f}%)")
-    print(f"  - Full Losses (R = -1):    {loss_count}")
-    print(f"  - Break-Even (R = 0):      {be_count}")
+    print(f"Total Sample Trades (N):        {total_trades}")
+    print(f"Winning Trades (R > 0):         {win_count} ({p_win*100:.2f}%)")
+    print(f"Full Losing Trades (R < 0):     {loss_count} ({p_loss*100:.2f}%)")
+    print(f"Break-Even Trades (R == 0):     {be_count} ({p_be*100:.2f}%)")
     print("------------------------------------------------------------")
-    print(f"Gross Profit (+R):           +{gross_profit:.2f}R")
-    print(f"Gross Loss (-R):             -{gross_loss:.2f}R")
-    print(f"Average Winner:              +{avg_win:.2f}R")
-    print(f"Average Loser (Non-Win):     -{avg_loss:.2f}R")
-    print(f"System Expectancy (E):       +{expectancy:.2f}R per trade")
-    print(f"Audited Profit Factor (PF):  {profit_factor:.2f}  [Exact Math Alignment]")
-    print(f"95% Bootstrap CI for PF:     [{ci_lower} - {ci_upper}]")
+    print(f"Gross Profit (+R):              +{gross_profit:.2f}R")
+    print(f"Gross Loss (-R):                -{gross_loss:.2f}R")
+    print(f"Average Winner (R > 0):         +{avg_win:.2f}R")
+    print(f"Average Losing Trade (R < 0):   -{avg_loss_full:.2f}R")
+    print(f"Average Non-Winning Trade:      -{avg_loss_blended:.2f}R")
+    print("------------------------------------------------------------")
+    print(f"System Expectancy (E):          +{expectancy:.2f}R per trade")
+    print(f"Institutional Profit Factor:    {profit_factor:.2f}")
+    print(f"95% Bootstrap CI for PF:        [{ci_lower} - {ci_upper}]")
     print("============================================================")
 
 if __name__ == "__main__":
@@ -127,4 +132,4 @@ if __name__ == "__main__":
     sys.path.append('.')
     from scratch.simulate_gold_backtest import generate_gold_2month_dataset
     dataset = generate_gold_2month_dataset()
-    generate_audited_quantitative_report(dataset)
+    generate_institutional_audited_report(dataset)

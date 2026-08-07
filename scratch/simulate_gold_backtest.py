@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 
 # Import journal analyzer engine
 sys.path.append('.')
-from python.journal_analyzer import generate_audited_quantitative_report
+from python.journal_analyzer import generate_institutional_audited_report
 
 def generate_gold_2month_dataset():
     random.seed(42) # Deterministic empirical simulation
@@ -120,4 +120,4 @@ if __name__ == "__main__":
     dataset = generate_gold_2month_dataset()
     with open("scratch/gold_2month_trades.csv", "w") as f:
         f.write(dataset)
-    generate_audited_quantitative_report(dataset)
+    generate_institutional_audited_report(dataset)
