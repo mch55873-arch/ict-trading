@@ -1,69 +1,66 @@
-# Quantitative Research & Risk Protocol (v9.3 Standard)
+# Quantitative Research & Risk Protocol (v9.4 Institutional Standard)
 
 **Repository:** [`github.com/mch55873-arch/ict-trading`](https://github.com/mch55873-arch/ict-trading)  
-**Specification Level:** Institutional Quantitative Hedge Fund Standard (v9.3)  
-**Primary Focus:** Walk-Forward Optimization, Monte Carlo Simulation, Risk Ratios & Market Regimes  
+**Specification Level:** Hedge Fund Quantitative Research Standard (v9.4)  
+**Primary Focus:** Expectancy ($E$), 23-Column Trade Journal, Walk-Forward Rolling Windows & Monte Carlo  
 
 ---
 
-## 1. Walk-Forward & Out-of-Sample Testing Protocol
+## 1. Quantitative Core Directives
 
-To avoid **overfitting / curve-fitting**, parameters are validated using rolling walk-forward windows:
-
-```
-[Window 1: Jan-Jun (In-Sample Training)]   ──► Validate on [Jul-Aug (Out-of-Sample)]
-[Window 2: Feb-Jul (In-Sample Training)]   ──► Validate on [Aug-Sep (Out-of-Sample)]
-[Window 3: Mar-Aug (In-Sample Training)]   ──► Validate on [Sep-Oct (Out-of-Sample)]
-```
-
-- **Pass Criterion:** Out-of-sample Profit Factor must retain at least **$80\%$ of In-Sample Profit Factor** without exceeding $15\%$ max drawdown.
+> **1. Expectancy Over Win Rate:** Win rate percentage is not an isolated target. System quality is governed strictly by **Expectancy ($E > +0.5R$)** and **Profit Factor ($PF > 1.8$)**.  
+> **2. Sample Size Integrity:** Minimum sample size requirement is **$N \ge 500$ verified trades** across Bull, Bear, Ranging, High Volatility, and Low Volatility market regimes.  
+> **3. Automated Journaling:** Eliminates manual logging errors, biases, and missing trades via automatic code-generated logs.  
 
 ---
 
-## 2. Monte Carlo Simulation Engine
+## 2. 23-Column Automated CSV Trade Journal Specification
 
-Simulates **1,000 random trade sequence reshuffles** from historical trade samples to compute risk boundaries:
+Every trade generates a complete 23-parameter analytical record for automated quantitative analysis:
+
+```csv
+TradeID, Symbol, Timeframe, Session, Weekday, Direction, HTFBias, SweepType, FvgSize, ObQuality, DisplacementScore, ConfluenceScore, ATR, Spread, EntryPrice, SLPrice, TPPrice, ExitPrice, RR, RMultiple, DurationBars, MFE, MAE, ReasonClosed
+1, XAUUSD, M5, London KZ, Tue, LONG, Bullish, SSL Sweep, 2.45, 90%, 85%, 85%, 3.20, 0.25, 2380.50, 2374.20, 2405.00, 2399.40, 1:3.8, +3.0R, 18, +3.8R, -0.4R, CLOSED_TP2
+2, EURUSD, M15, NY Open, Wed, SHORT, Bearish, BSL Sweep, 0.0012, 80%, 75%, 75%, 0.0018, 0.0001, 1.0850, 1.0880, 1.0760, 1.0850, 1:3.0, 0.0R, 12, +1.8R, -0.2R, CLOSED_BE
+```
+
+---
+
+## 3. Walk-Forward Rolling Window Protocol
+
+Walk-forward validation tests whether parameter sets retain profitability on unseen future market regimes:
+
+```
+┌───────────────────────────────────────────────────────────┐
+│ Rolling Window 1: Jan-Apr (In-Sample) ──► May (Out-of-Sample) │
+├───────────────────────────────────────────────────────────┤
+│ Rolling Window 2: Feb-May (In-Sample) ──► Jun (Out-of-Sample) │
+├───────────────────────────────────────────────────────────┤
+│ Rolling Window 3: Mar-Jun (In-Sample) ──► Jul (Out-of-Sample) │
+└───────────────────────────────────────────────────────────┘
+```
+
+- **Retention Criterion:** Out-of-Sample Profit Factor must maintain at least **$80\%$ of In-Sample Profit Factor**.
+
+---
+
+## 4. Monte Carlo Simulation Engine
+
+Simulates **1,000 random trade sequence reshuffles** from $500+$ historical trade logs:
 
 | Metric | Target Boundary | Description |
 |---|---|---|
-| **Probability of Ruin ($P_{\text{ruin}}$)** | $< 1.0\%$ | Risk of losing $50\%$ account equity over 100 trades. |
+| **Probability of Ruin ($P_{\text{ruin}}$)** | $< 0.5\%$ | Risk of losing $50\%$ account equity over 100 trade sequences. |
 | **95% Confidence Max Drawdown** | $\le 14.5\%$ | 95th percentile worst-case drawdown from 1,000 iterations. |
-| **Ulcer Index (UI)** | $< 3.5$ | Measures depth and duration of equity drawdowns. |
+| **Ulcer Index (UI)** | $< 3.5$ | Depth and duration penalty metric for equity drawdowns. |
 
 ---
 
-## 3. Market Regime Classification
+## 5. Market Regime Filter Matrix
 
-Market conditions are dynamically categorized into 4 distinct regimes to evaluate setup robustness:
-
-```mermaid
-graph TD
-    Regime[Market Regime Engine] --> HighVolTrend[1. High-Volatility Trending]
-    Regime --> LowVolTrend[2. Low-Volatility Trending]
-    Regime --> HighVolRange[3. High-Volatility Ranging]
-    Regime --> LowVolRange[4. Low-Volatility Ranging]
-```
-
-- **Target Rule:** The ICT Execution Engine must remain positive expectancy ($E > +0.5R$) in at least **3 out of 4 market regimes**.
-
----
-
-## 4. Advanced Risk & Trade Quality Ratios
-
-### A. Sharpe & Sortino Ratios
-- **Sharpe Ratio ($S$):** Measures total risk-adjusted return:
-  $$S = \frac{R_p - R_f}{\sigma_p}$$
-- **Sortino Ratio ($S_t$):** Filters out upside volatility and penalizes only downside risk:
-  $$S_t = \frac{R_p - R_f}{\sigma_d}$$
-- **Target:** Sortino Ratio $\ge 2.5$ on XAUUSD M5 historical backtest.
-
-### B. MAE & MFE Excursion Analysis
-- **Maximum Adverse Excursion (MAE):** Tracks maximum drawdown price reached during active trades before exit.
-- **Maximum Favorable Excursion (MFE):** Tracks peak profit price reached during active trades to optimize Take Profit thresholds.
-
----
-
-## 5. Statistical Significance & Sample Size Bounds
-
-- **Minimum Sample Requirement:** $N \ge 300$ verified trades across XAUUSD M5, EURUSD M15, and GBPUSD M5.
-- **Statistical Significance Goal:** Student's $t$-test $p$-value $< 0.01$ proving trading edge is statistically distinguishable from random walk noise.
+| Market Regime | Detection Condition | Required Action | Target Profit Factor |
+|---|---|---|---|
+| **1. High Volatility Trending** | `ATR > SMA(20) * 1.3 AND ADX > 25` | Full Execution | $PF \ge 2.5$ |
+| **2. Low Volatility Trending** | `ATR <= SMA(20) * 1.3 AND ADX > 25` | Full Execution | $PF \ge 2.0$ |
+| **3. High Volatility Ranging** | `ATR > SMA(20) * 1.3 AND ADX <= 25` | Reduce Risk ($0.5\%$) | $PF \ge 1.5$ |
+| **4. Low Volatility Ranging** | `ATR <= SMA(20) * 1.3 AND ADX <= 25` | Filter / Off-Hours | Filter Out |
