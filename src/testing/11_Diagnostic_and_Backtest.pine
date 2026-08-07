@@ -1,0 +1,31 @@
+//@version=6
+// STEP 1 QA PROTOCOL: Trade Diagnostics & Performance Statistics Engine
+// Repository: github.com/mch55873-arch/ict-trading/src/testing
+// Quality Guarantee: Non-Repainting Historical Performance Diagnostics
+
+// ══════════════════════════════════════════════════════════════════
+//  PERFORMANCE DIAGNOSTICS & STATISTIC ENGINE
+// ══════════════════════════════════════════════════════════════════
+
+type PerformanceStats
+    int   totalTrades
+    int   winningTrades
+    int   losingTrades
+    float grossProfit
+    float grossLoss
+    float winRate
+    float profitFactor
+    float maxDrawdown
+
+f_updatePerformanceStats(stats, tradeStatus, riskRewardRatio) =>
+    if tradeStatus == "CLOSED_TP" or tradeStatus == "CLOSED_TP3_FINAL"
+        stats.totalTrades   += 1
+        stats.winningTrades += 1
+        stats.grossProfit   += riskRewardRatio
+    else if tradeStatus == "CLOSED_SL"
+        stats.totalTrades   += 1
+        stats.losingTrades  += 1
+        stats.grossLoss     += 1.0
+
+    stats.winRate      := stats.totalTrades > 0 ? (stats.winningTrades / stats.totalTrades) * 100.0 : 0.0
+    stats.profitFactor := stats.grossLoss > 0 ? stats.grossProfit / stats.grossLoss : stats.grossProfit
