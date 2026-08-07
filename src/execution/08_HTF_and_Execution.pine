@@ -1,0 +1,39 @@
+//@version=6
+// PHASE 7 & 8: CISD Engine, HTF Synchronization & Dynamic Matrix Execution Engine
+// Repository: github.com/mch55873-arch/ict-trading/src/execution
+// Quality Guarantee: Zero Repaint, Dynamic Matrix Scoring (Sum = 100%)
+
+// ══════════════════════════════════════════════════════════════════
+//  HTF SYNCHRONIZATION & CONFLUENCE MATRIX ENGINE
+// ══════════════════════════════════════════════════════════════════
+
+// Evaluates Triple Timeframe Hierarchy (Daily + 4H + LTF Structure)
+f_evaluateHtfHierarchy(bias) =>
+    [dClose, dPH, dPL]   = request.security(syminfo.tickerid, "D", [close[1], ta.pivothigh(high, 3, 3)[1], ta.pivotlow(low, 3, 3)[1]], lookahead=barmerge.lookahead_off, gaps=barmerge.gaps_off)
+    [h4Close, h4PH, h4PL] = request.security(syminfo.tickerid, "240", [close[1], ta.pivothigh(high, 3, 3)[1], ta.pivotlow(low, 3, 3)[1]], lookahead=barmerge.lookahead_off, gaps=barmerge.gaps_off)
+
+    int htfBullCount = (not na(dPH) and dClose > dPH ? 1 : 0) + (not na(h4PH) and h4Close > h4PH ? 1 : 0) + (bias == "bullish" ? 1 : 0)
+    int htfBearCount = (not na(dPL) and dClose < dPL ? 1 : 0) + (not na(h4PL) and h4Close < h4PL ? 1 : 0) + (bias == "bearish" ? 1 : 0)
+
+    htfBullCount >= 2 ? "Bullish" : htfBearCount >= 2 ? "Bearish" : "Neutral"
+
+// Feature Normalized Dynamic Confluence Scoring Matrix (Total = 100%)
+f_calculateConfluenceMatrix(fsmDir, htfBias, evBullSweep, evBearSweep, evDisp, evBullMSS, evBearMSS, evBullCISD, evBearCISD, evBullGap, evBearGap, hasBullOB, hasBearOB, inDiscount, inPremium, inLondon, inNY, inSilverB) =>
+    int score = 0
+    if (fsmDir == 1 and htfBias == "Bullish") or (fsmDir == -1 and htfBias == "Bearish")
+        score += 20 // HTF Alignment
+    if evBullSweep or evBearSweep
+        score += 15 // Sweep Quality
+    if evDisp
+        score += 20 // Displacement Score
+    if evBullMSS or evBearMSS
+        score += 10 // MSS Shift
+    if evBullGap or evBearGap
+        score += 10 // Qualified FVG
+    if hasBullOB or hasBearOB
+        score += 10 // Displacement OB
+    if (fsmDir == 1 and inDiscount) or (fsmDir == -1 and inPremium)
+        score += 10 // OTE / Discount
+    if inLondon or inNY or inSilverB
+        score += 5  // PKT Killzone
+    score

@@ -1,0 +1,65 @@
+//@version=6
+// PHASE 5: Fair Value Gap (FVG), Consequent Encroachment (CE) & IFVG Engine
+// Repository: github.com/mch55873-arch/ict-trading/src/fvg
+// Quality Guarantee: Zero Repaint, Replay-Safe, Retest-Confirmed Inversion
+
+// ══════════════════════════════════════════════════════════════════
+//  FAIR VALUE GAP (FVG) & IFVG ENGINE
+// ══════════════════════════════════════════════════════════════════
+
+// Evaluates Qualified Volume FVGs, Inversion State & Retest Confirmation
+f_evaluateFvgEngine(fvgZones, showFVG, showIFVG, bullGap, bearGap, maxFvgCount, bullColor, bearColor, lastFvgCreatedBar) =>
+    int updatedCreatedBar = lastFvgCreatedBar
+
+    // Qualified Bullish FVG Creation
+    if showFVG and bullGap and lastFvgCreatedBar != bar_index
+        fb = box.new(bar_index[2], low, bar_index, high[2], border_color=na, bgcolor=color.new(bullColor, 88), text="FVG (CE)", text_size=size.tiny, text_color=bullColor)
+        array.push(fvgZones, FvgZone.new(fb, true, false, false, bar_index))
+        updatedCreatedBar := bar_index
+        if array.size(fvgZones) > maxFvgCount
+            FvgZone oldF = array.shift(fvgZones)
+            box.delete(oldF.b)
+
+    // Qualified Bearish FVG Creation
+    if showFVG and bearGap and lastFvgCreatedBar != bar_index
+        fb2 = box.new(bar_index[2], low[2], bar_index, high, border_color=na, bgcolor=color.new(bearColor, 88), text="FVG (CE)", text_size=size.tiny, text_color=bearColor)
+        array.push(fvgZones, FvgZone.new(fb2, false, false, false, bar_index))
+        updatedCreatedBar := bar_index
+        if array.size(fvgZones) > maxFvgCount
+            FvgZone oldF2 = array.shift(fvgZones)
+            box.delete(oldF2.b)
+
+    // Manage Mitigation, Inversion (IFVG) & Retest Confirmation
+    if array.size(fvgZones) > 0
+        for i = array.size(fvgZones) - 1 to 0
+            fz = array.get(fvgZones, i)
+            if not fz.isInverted
+                if fz.isBull and close < box.get_bottom(fz.b)
+                    if showIFVG
+                        fz.isInverted := true
+                        box.set_bgcolor(fz.b, color.new(bearColor, 90))
+                        box.set_border_color(fz.b, bearColor)
+                        box.set_text(fz.b, "IFVG (Pending)")
+                    else
+                        box.delete(fz.b)
+                        array.remove(fvgZones, i)
+                else if not fz.isBull and close > box.get_top(fz.b)
+                    if showIFVG
+                        fz.isInverted := true
+                        box.set_bgcolor(fz.b, color.new(bullColor, 90))
+                        box.set_border_color(fz.b, bullColor)
+                        box.set_text(fz.b, "IFVG (Pending)")
+                    else
+                        box.delete(fz.b)
+                        array.remove(fvgZones, i)
+                else
+                    box.set_right(fz.b, bar_index)
+            else if fz.isInverted and not fz.isRetested
+                if fz.isBull and high >= box.get_bottom(fz.b)
+                    fz.isRetested := true
+                    box.set_text(fz.b, "Confirmed IFVG ▼")
+                else if not fz.isBull and low <= box.get_top(fz.b)
+                    fz.isRetested := true
+                    box.set_text(fz.b, "Confirmed IFVG ▲")
+
+    updatedCreatedBar

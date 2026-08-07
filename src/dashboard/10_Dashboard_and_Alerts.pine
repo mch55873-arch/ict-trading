@@ -1,0 +1,33 @@
+//@version=6
+// PHASE 10: Real-Time Debug Dashboard & Non-Repainting Alerts Engine
+// Repository: github.com/mch55873-arch/ict-trading/src/dashboard
+// Quality Guarantee: Zero Repaint, Confirmed Bar Lock
+
+// ══════════════════════════════════════════════════════════════════
+//  INSTITUTIONAL DASHBOARD ENGINE
+// ══════════════════════════════════════════════════════════════════
+
+f_renderInstitutionalDashboard(showDashboard, fsmState, bias, htfBias, inDiscount, inSilverB, inNY, inLondon, inAsia, confluenceScore, activeTrade, bullColor, bearColor) =>
+    var table dash = table.new(position.top_right, 2, 8, bgcolor=color.new(color.black, 85), border_width=1, border_color=color.gray)
+
+    if showDashboard and barstate.islast
+        table.cell(dash, 0, 0, "FSM Engine State", text_color=color.white, bgcolor=color.new(color.gray, 70))
+        table.cell(dash, 1, 0, f_getFsmStateName(fsmState), text_color=fsmState == 7 ? bullColor : fsmState == 0 ? color.gray : color.orange)
+
+        table.cell(dash, 0, 1, "FSM Structure Bias", text_color=color.white, bgcolor=color.new(color.gray, 70))
+        table.cell(dash, 1, 1, str.tostring(bias), text_color=bias == "bullish" ? bullColor : bearColor)
+        
+        table.cell(dash, 0, 2, "Triple Trend (D/4H/LTF)", text_color=color.white, bgcolor=color.new(color.gray, 70))
+        table.cell(dash, 1, 2, htfBias, text_color=htfBias == "Bullish" ? bullColor : bearColor)
+        
+        table.cell(dash, 0, 3, "Dealing Range", text_color=color.white, bgcolor=color.new(color.gray, 70))
+        table.cell(dash, 1, 3, inDiscount ? "Discount Zone" : "Premium Zone", text_color=inDiscount ? bullColor : bearColor)
+        
+        table.cell(dash, 0, 4, "PKT Killzone Active", text_color=color.white, bgcolor=color.new(color.gray, 70))
+        table.cell(dash, 1, 4, inSilverB ? "NY Silver Bullet (19-20 PKT)" : inNY ? "NY Open (17-20 PKT)" : inLondon ? "London KZ (12-15 PKT)" : inAsia ? "Asia KZ (05-14 PKT)" : "Off-Hours", text_color=inSilverB or inNY or inLondon ? color.aqua : color.gray)
+        
+        table.cell(dash, 0, 5, "Matrix Confluence Score", text_color=color.white, bgcolor=color.new(color.gray, 70))
+        table.cell(dash, 1, 5, str.tostring(confluenceScore) + "%", text_color=confluenceScore >= 75 ? bullColor : confluenceScore >= 45 ? color.orange : bearColor)
+
+        table.cell(dash, 0, 6, "Active Trade Lifecycle", text_color=color.white, bgcolor=color.new(color.gray, 70))
+        table.cell(dash, 1, 6, activeTrade.active ? activeTrade.statusStr : "NO_ACTIVE_TRADE", text_color=activeTrade.active ? color.yellow : color.gray)

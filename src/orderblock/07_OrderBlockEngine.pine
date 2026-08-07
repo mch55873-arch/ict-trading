@@ -1,0 +1,87 @@
+//@version=6
+// PHASE 6: Displacement-Origin Order Block & 5-Stage Lifecycle Engine
+// Repository: github.com/mch55873-arch/ict-trading/src/orderblock
+// Quality Guarantee: Zero Repaint, Replay-Safe, Displacement Origin Scanner
+
+// ══════════════════════════════════════════════════════════════════
+//  DISPLACEMENT ORIGIN ORDER BLOCK ENGINE
+// ══════════════════════════════════════════════════════════════════
+
+// Scans exact displacement expansion start bar and manages 5-stage lifecycle
+f_evaluateOrderBlockEngine(bullOBs, bearOBs, breakerBoxes, justEnteredOBState, fsmDir, lastDisplacementBar, showOB, showBreaker, maxObCount, ev_bearMSS, ev_bullMSS, bullColor, bearColor) =>
+    // One-Shot Displacement Origin OB Creation
+    if showOB and justEnteredOBState and fsmDir == 1 // DIR_LONG
+        int dispOriginOffset = bar_index - nz(lastDisplacementBar, bar_index)
+        int obIdx = na
+        for i = math.max(1, dispOriginOffset) to dispOriginOffset + 10
+            if close[i] < open[i]
+                obIdx := i
+                break
+        if not na(obIdx)
+            top = high[obIdx], bot = low[obIdx], meanVal = (top + bot) / 2
+            b   = box.new(bar_index[obIdx], top, bar_index, bot, border_color=bullColor, bgcolor=color.new(bullColor, 85), extend=extend.right, text="Origin OB", text_size=size.tiny, text_color=bullColor)
+            array.push(bullOBs, ObZone.new(b, true, bar_index[obIdx], top, bot, meanVal, 0))
+            if array.size(bullOBs) > maxObCount
+                ObZone old = array.shift(bullOBs)
+                box.delete(old.b)
+
+    if showOB and justEnteredOBState and fsmDir == -1 // DIR_SHORT
+        int dispOriginOffset2 = bar_index - nz(lastDisplacementBar, bar_index)
+        int obIdx2 = na
+        for i = math.max(1, dispOriginOffset2) to dispOriginOffset2 + 10
+            if close[i] > open[i]
+                obIdx2 := i
+                break
+        if not na(obIdx2)
+            top2 = high[obIdx2], bot2 = low[obIdx2], meanVal2 = (top2 + bot2) / 2
+            b2   = box.new(bar_index[obIdx2], top2, bar_index, bot2, border_color=bearColor, bgcolor=color.new(bearColor, 85), extend=extend.right, text="Origin OB", text_size=size.tiny, text_color=bearColor)
+            array.push(bearOBs, ObZone.new(b2, false, bar_index[obIdx2], top2, bot2, meanVal2, 0))
+            if array.size(bearOBs) > maxObCount
+                ObZone old2 = array.shift(bearOBs)
+                box.delete(old2.b)
+
+    // 5-Stage Bullish OB Lifecycle Management
+    if array.size(bullOBs) > 0
+        for i = array.size(bullOBs) - 1 to 0
+            obZone = array.get(bullOBs, i)
+            if low <= obZone.top and low > obZone.meanThreshold and obZone.stage == 0
+                obZone.stage := 1 // Partial Mitigation
+                box.set_bgcolor(obZone.b, color.new(bullColor, 92))
+            else if low <= obZone.meanThreshold and close >= obZone.bot and obZone.stage <= 1
+                obZone.stage := 2 // Full 50% Mean Threshold Mitigation
+                box.set_bgcolor(obZone.b, color.new(color.gray, 90))
+            else if close < obZone.bot
+                if showBreaker and ev_bearMSS
+                    obZone.stage := 3 // Breaker Block Conversion
+                    box.set_border_color(obZone.b, bearColor)
+                    box.set_bgcolor(obZone.b, color.new(bearColor, 85))
+                    box.set_text(obZone.b, "Breaker Block")
+                    array.push(breakerBoxes, obZone.b)
+                    f_trimBoxes(breakerBoxes, maxObCount)
+                else
+                    obZone.stage := 4 // Invalidated / Consumed
+                    box.delete(obZone.b)
+                array.remove(bullOBs, i)
+
+    // 5-Stage Bearish OB Lifecycle Management
+    if array.size(bearOBs) > 0
+        for i = array.size(bearOBs) - 1 to 0
+            obZone2 = array.get(bearOBs, i)
+            if high >= obZone2.bot and high < obZone2.meanThreshold and obZone2.stage == 0
+                obZone2.stage := 1
+                box.set_bgcolor(obZone2.b, color.new(bearColor, 92))
+            else if high >= obZone2.meanThreshold and close <= obZone2.top and obZone2.stage <= 1
+                obZone2.stage := 2
+                box.set_bgcolor(obZone2.b, color.new(color.gray, 90))
+            else if close > obZone2.top
+                if showBreaker and ev_bullMSS
+                    obZone2.stage := 3
+                    box.set_border_color(obZone2.b, bullColor)
+                    box.set_bgcolor(obZone2.b, color.new(bullColor, 85))
+                    box.set_text(obZone2.b, "Breaker Block")
+                    array.push(breakerBoxes, obZone2.b)
+                    f_trimBoxes(breakerBoxes, maxObCount)
+                else
+                    obZone2.stage := 4
+                    box.delete(obZone2.b)
+                array.remove(bearOBs, i)
