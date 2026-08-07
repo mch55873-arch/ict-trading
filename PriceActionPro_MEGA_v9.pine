@@ -425,10 +425,29 @@ inLondon  = not na(time(timeframe.period, sessLondon, "Asia/Karachi"))
 inNY      = not na(time(timeframe.period, sessNY, "Asia/Karachi"))
 inSilverB = not na(time(timeframe.period, sessSilverB, "Asia/Karachi"))
 
-bgcolor(showKillzones and inSilverB ? color.new(color.purple, 92) : showKillzones and inNY ? color.new(color.blue, 95) : showKillzones and inLondon ? color.new(color.teal, 95) : showKillzones and inAsia ? color.new(color.yellow, 97) : na)
+color bgCol = na
+if showKillzones
+    if inSilverB
+        bgCol := color.new(color.purple, 92)
+    else if inNY
+        bgCol := color.new(color.blue, 95)
+    else if inLondon
+        bgCol := color.new(color.teal, 95)
+    else if inAsia
+        bgCol := color.new(color.yellow, 97)
 
-[dClose, dPH, dPL]   = request.security(syminfo.tickerid, "D", [close[1], ta.pivothigh(high, 3, 3)[1], ta.pivotlow(low, 3, 3)[1]], lookahead=barmerge.lookahead_off)
-[h4Close, h4PH, h4PL] = request.security(syminfo.tickerid, "240", [close[1], ta.pivothigh(high, 3, 3)[1], ta.pivotlow(low, 3, 3)[1]], lookahead=barmerge.lookahead_off)
+bgcolor(bgCol)
+
+dPH_val = ta.pivothigh(high, 3, 3)
+dPL_val = ta.pivotlow(low, 3, 3)
+
+dClose  = request.security(syminfo.tickerid, "D", close[1], lookahead=barmerge.lookahead_off)
+dPH     = request.security(syminfo.tickerid, "D", dPH_val[1], lookahead=barmerge.lookahead_off)
+dPL     = request.security(syminfo.tickerid, "D", dPL_val[1], lookahead=barmerge.lookahead_off)
+
+h4Close = request.security(syminfo.tickerid, "240", close[1], lookahead=barmerge.lookahead_off)
+h4PH    = request.security(syminfo.tickerid, "240", dPH_val[1], lookahead=barmerge.lookahead_off)
+h4PL    = request.security(syminfo.tickerid, "240", dPL_val[1], lookahead=barmerge.lookahead_off)
 
 int htfBullCount = (not na(dPH) and dClose > dPH ? 1 : 0) + (not na(h4PH) and h4Close > h4PH ? 1 : 0) + (bias == "bullish" ? 1 : 0)
 int htfBearCount = (not na(dPL) and dClose < dPL ? 1 : 0) + (not na(h4PL) and h4Close < h4PL ? 1 : 0) + (bias == "bearish" ? 1 : 0)
@@ -473,7 +492,8 @@ if fsmState == FSM_EXECUTION and not activeTrade.active and barstate.isconfirmed
         p2       = close + riskP * 3.5 // TP2 at 1:3.5 RR
         p3       = nz(dealingRangeHigh, lastPH) // Final TP3
         activeTrade := InstitutionalTrade.new(DIR_LONG, close, frozenSL, p1, p2, p3, bar_index, TRADE_STAGE_OPEN, true, "OPEN")
-        label.new(bar_index, low, "★ v9 LONG SETUP (" + str.tostring(confluenceScore) + "%)\nSL: " + str.tostring(frozenSL, "#.##") + " | TP1: " + str.tostring(p1, "#.##") + " | TP2: " + str.tostring(p2, "#.##") + " | TP3: " + str.tostring(p3, "#.##"), style=label.style_label_up, color=bullColor, textcolor=color.white, size=size.normal)
+        txtLong = "★ v9 LONG SETUP (" + str.tostring(confluenceScore) + "%)\nSL: " + str.tostring(frozenSL, "#.##") + " | TP1: " + str.tostring(p1, "#.##") + " | TP2: " + str.tostring(p2, "#.##") + " | TP3: " + str.tostring(p3, "#.##")
+        label.new(bar_index, low, txtLong, style=label.style_label_up, color=bullColor, textcolor=color.white, size=size.normal)
     else if fsmDir == DIR_SHORT and inPremium
         frozenSL2 = setupSweepPrice
         riskP2    = math.abs(frozenSL2 - close)
@@ -481,7 +501,8 @@ if fsmState == FSM_EXECUTION and not activeTrade.active and barstate.isconfirmed
         p2_2      = close - riskP2 * 3.5
         p3_2      = nz(dealingRangeLow, lastPL)
         activeTrade := InstitutionalTrade.new(DIR_SHORT, close, frozenSL2, p1_2, p2_2, p3_2, bar_index, TRADE_STAGE_OPEN, true, "OPEN")
-        label.new(bar_index, high, "★ v9 SHORT SETUP (" + str.tostring(confluenceScore) + "%)\nSL: " + str.tostring(frozenSL2, "#.##") + " | TP1: " + str.tostring(p1_2, "#.##") + " | TP2: " + str.tostring(p2_2, "#.##") + " | TP3: " + str.tostring(p3_2, "#.##"), style=label.style_label_down, color=bearColor, textcolor=color.white, size=size.normal)
+        txtShort = "★ v9 SHORT SETUP (" + str.tostring(confluenceScore) + "%)\nSL: " + str.tostring(frozenSL2, "#.##") + " | TP1: " + str.tostring(p1_2, "#.##") + " | TP2: " + str.tostring(p2_2, "#.##") + " | TP3: " + str.tostring(p3_2, "#.##")
+        label.new(bar_index, high, txtShort, style=label.style_label_down, color=bearColor, textcolor=color.white, size=size.normal)
 
 // Multi-Stage Trade Execution Lifecycle
 if activeTrade.active and barstate.isconfirmed
