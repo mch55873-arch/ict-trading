@@ -1,0 +1,57 @@
+//@version=6
+// v9.0 CORE ENGINE: Object Pool & Event Types
+// Repository: github.com/mch55873-arch/ict-trading/src/core
+
+int EVENT_NONE         = 0
+int EVENT_SWEEP        = 1
+int EVENT_DISPLACEMENT = 2
+int EVENT_FVG          = 3
+int EVENT_MSS          = 4
+int EVENT_CISD         = 5
+
+int DIR_NONE  = 0
+int DIR_LONG  = 1
+int DIR_SHORT = -1
+
+// Event Object (Rich Event Contract)
+type Event
+    int   eventType
+    int   direction
+    float price
+    int   barIdx
+    int   eventTime
+    float qualityScore
+    bool  valid
+
+// Object Pool Wrapper for Drawing Reuse
+type BoxPoolItem
+    box   b
+    bool  inUse
+    int   createdBar
+
+type LinePoolItem
+    line  l
+    bool  inUse
+    int   createdBar
+
+f_getOrCreateBox(pool, barIdx, top, bot, col, fillCol) =>
+    box res = na
+    if array.size(pool) > 0
+        for i = 0 to array.size(pool) - 1
+            item = array.get(pool, i)
+            if not item.inUse
+                item.inUse := true
+                item.createdBar := barIdx
+                box.set_left(item.b, barIdx)
+                box.set_right(item.b, barIdx)
+                box.set_top(item.b, top)
+                box.set_bottom(item.b, bot)
+                box.set_border_color(item.b, col)
+                box.set_bgcolor(item.b, fillCol)
+                res := item.b
+                break
+    if na(res)
+        bNew = box.new(barIdx, top, barIdx, bot, border_color=col, bgcolor=fillCol)
+        array.push(pool, BoxPoolItem.new(bNew, true, barIdx))
+        res := bNew
+    res

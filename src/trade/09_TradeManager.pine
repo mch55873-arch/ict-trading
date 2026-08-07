@@ -1,0 +1,70 @@
+//@version=6
+// v9.0 TRADE ENGINE: Multi-Stage Institutional Trade Manager
+// Repository: github.com/mch55873-arch/ict-trading/src/trade
+
+int TRADE_STAGE_IDLE       = 0
+int TRADE_STAGE_OPEN       = 1
+int TRADE_STAGE_TP1_HIT    = 2
+int TRADE_STAGE_BE_SHIFTED = 3
+int TRADE_STAGE_TP2_HIT    = 4
+int TRADE_STAGE_TRAILING   = 5
+int TRADE_STAGE_CLOSED     = 6
+
+type InstitutionalTrade
+    int   direction
+    float entryPrice
+    float slPrice
+    float tp1Price
+    float tp2Price
+    float tp3Price
+    int   entryBar
+    int   stage
+    bool  active
+    string statusStr
+
+f_executeTradeManager(t, currentClose, currentHigh, currentLow) =>
+    if t.active
+        if t.direction == 1 // LONG
+            // Stage 1 -> TP1 Hit
+            if t.stage == TRADE_STAGE_OPEN and currentHigh >= t.tp1Price
+                t.stage        := TRADE_STAGE_TP1_HIT
+                t.slPrice      := t.entryPrice // Move SL to Break-Even
+                t.statusStr    := "TP1_HIT_BE_SHIFTED"
+                label.new(bar_index, currentHigh, "TP1 HIT (1:2 RR) ► SL MOVED TO BE", style=label.style_label_down, color=color.aqua, textcolor=color.black, size=size.tiny)
+            
+            // Stage -> TP2 Hit
+            else if t.stage == TRADE_STAGE_TP1_HIT and currentHigh >= t.tp2Price
+                t.stage     := TRADE_STAGE_TP2_HIT
+                t.statusStr := "TP2_HIT_TRAILING"
+                label.new(bar_index, currentHigh, "TP2 HIT ► TRAILING ACTIVE", style=label.style_label_down, color=color.teal, textcolor=color.white, size=size.tiny)
+
+            // Exit Conditions
+            if currentLow <= t.slPrice
+                t.stage    := TRADE_STAGE_CLOSED
+                t.active   := false
+                t.statusStr := t.slPrice == t.entryPrice ? "CLOSED_BE" : "CLOSED_SL"
+            else if currentHigh >= t.tp3Price
+                t.stage    := TRADE_STAGE_CLOSED
+                t.active   := false
+                t.statusStr := "CLOSED_TP3_FINAL"
+
+        else if t.direction == -1 // SHORT
+            if t.stage == TRADE_STAGE_OPEN and currentLow <= t.tp1Price
+                t.stage        := TRADE_STAGE_TP1_HIT
+                t.slPrice      := t.entryPrice // Move SL to Break-Even
+                t.statusStr    := "TP1_HIT_BE_SHIFTED"
+                label.new(bar_index, currentLow, "TP1 HIT (1:2 RR) ► SL MOVED TO BE", style=label.style_label_up, color=color.aqua, textcolor=color.black, size=size.tiny)
+
+            else if t.stage == TRADE_STAGE_TP1_HIT and currentLow <= t.tp2Price
+                t.stage     := TRADE_STAGE_TP2_HIT
+                t.statusStr := "TP2_HIT_TRAILING"
+                label.new(bar_index, currentLow, "TP2 HIT ► TRAILING ACTIVE", style=label.style_label_up, color=color.teal, textcolor=color.white, size=size.tiny)
+
+            if currentHigh >= t.slPrice
+                t.stage    := TRADE_STAGE_CLOSED
+                t.active   := false
+                t.statusStr := t.slPrice == t.entryPrice ? "CLOSED_BE" : "CLOSED_SL"
+            else if currentLow <= t.tp3Price
+                t.stage    := TRADE_STAGE_CLOSED
+                t.active   := false
+                t.statusStr := "CLOSED_TP3_FINAL"
