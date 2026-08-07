@@ -1,0 +1,40 @@
+//@version=6
+// MODULE 4: Deterministic Event-Driven FSM Engine
+// Repository: github.com/mch55873-arch/ict-trading
+
+// Single Transition Deterministic FSM Step Function
+f_stepFSM(fsmState, fsmDir, evSweepLong, evSweepShort, evDisp, evGapLong, evGapShort, evMssLong, evMssShort) =>
+    int  newState   = fsmState
+    int  newDir     = fsmDir
+    bool transition = false
+
+    if fsmState == 0 and not transition
+        if evSweepLong
+            newState   := 1 // SWEEP
+            newDir     := 1 // LONG
+            transition := true
+        else if evSweepShort
+            newState   := 1 // SWEEP
+            newDir     := -1 // SHORT
+            transition := true
+
+    if fsmState == 1 and not transition
+        if evDisp
+            newState   := 2 // DISPLACEMENT
+            transition := true
+
+    if fsmState == 2 and not transition
+        if (fsmDir == 1 and evGapLong) or (fsmDir == -1 and evGapShort)
+            newState   := 3 // FVG
+            transition := true
+
+    if fsmState == 3 and not transition
+        if (fsmDir == 1 and evMssLong) or (fsmDir == -1 and evMssShort)
+            newState   := 4 // MSS
+            transition := true
+
+    if fsmState == 4 and not transition
+        newState   := 5 // OB_ACTIVE
+        transition := true
+
+    [newState, newDir, transition]

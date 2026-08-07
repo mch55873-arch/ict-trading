@@ -1,0 +1,28 @@
+//@version=6
+// MODULE 3: Quality Displacement, Volume FVG & Displacement-Origin OB Engine
+// Repository: github.com/mch55873-arch/ict-trading
+
+// Quality Displacement Filter
+f_checkDisplacement(atrMult, volMult) =>
+    atrVal       = ta.atr(14)
+    avgVol       = ta.sma(volume, 20)
+    isVolExp     = volume > avgVol * volMult
+    bodyVal      = math.abs(close - open)
+    candleRange  = high - low
+    bodyRatio    = candleRange > 0 ? bodyVal / candleRange : 0.0
+    prevRangeMax = math.max(high[1] - low[1], high[2] - low[2])
+    isImpulse    = candleRange > prevRangeMax and bodyRatio >= 0.60
+    (bodyVal > atrVal * atrMult and isImpulse and isVolExp)
+
+// Displacement Origin Order Block Scanner
+f_findOriginOB(dir, lastDispBar) =>
+    dispOffset = bar_index - nz(lastDispBar, bar_index)
+    int obIdx  = na
+    for i = math.max(1, dispOffset) to dispOffset + 10
+        if dir == 1 and close[i] < open[i]
+            obIdx := i
+            break
+        else if dir == -1 and close[i] > open[i]
+            obIdx := i
+            break
+    obIdx

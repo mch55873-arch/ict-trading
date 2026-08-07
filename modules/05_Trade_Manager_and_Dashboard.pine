@@ -1,0 +1,35 @@
+//@version=6
+// MODULE 5: Institutional Trade Manager & Realtime Dashboard Engine
+// Repository: github.com/mch55873-arch/ict-trading
+
+// Trade Manager Exits, Partial TP & Break-Even Logic
+f_manageTrade(tradeObj, currentClose, currentHigh, currentLow) =>
+    bool isClosed = false
+    if tradeObj.active
+        if tradeObj.direction == 1 // LONG
+            if not tradeObj.partialTaken and currentHigh >= tradeObj.partialTpPrice
+                tradeObj.partialTaken := true
+                tradeObj.isBreakEven  := true
+                tradeObj.slPrice      := tradeObj.entryPrice // Move SL to BE
+            if currentLow <= tradeObj.slPrice
+                tradeObj.status := tradeObj.isBreakEven ? "CLOSED_BE" : "CLOSED_SL"
+                tradeObj.active := false
+                isClosed        := true
+            else if currentHigh >= tradeObj.finalTpPrice
+                tradeObj.status := "CLOSED_TP"
+                tradeObj.active := false
+                isClosed        := true
+        else if tradeObj.direction == -1 // SHORT
+            if not tradeObj.partialTaken and currentLow <= tradeObj.partialTpPrice
+                tradeObj.partialTaken := true
+                tradeObj.isBreakEven  := true
+                tradeObj.slPrice      := tradeObj.entryPrice // Move SL to BE
+            if currentHigh >= tradeObj.slPrice
+                tradeObj.status := tradeObj.isBreakEven ? "CLOSED_BE" : "CLOSED_SL"
+                tradeObj.active := false
+                isClosed        := true
+            else if currentLow <= tradeObj.finalTpPrice
+                tradeObj.status := "CLOSED_TP"
+                tradeObj.active := false
+                isClosed        := true
+    isClosed

@@ -1,0 +1,20 @@
+//@version=6
+// MODULE 2: Dual Structure & Liquidity Mapping Engine
+// Repository: github.com/mch55873-arch/ict-trading
+
+// Dual Structure Pivots
+phSwing = ta.pivothigh(high, 8, 8)
+plSwing = ta.pivotlow(low, 8, 8)
+phInt   = ta.pivothigh(high, 3, 3)
+plInt   = ta.pivotlow(low, 3, 3)
+
+// Equal Highs / Lows Detection with Min Separation
+f_detectEQHL(phPrices, phBars, swingLen, eqMinSeparation, eqTolerance, bearColor, bullColor) =>
+    if array.size(phPrices) > 1
+        for i = 0 to array.size(phPrices) - 2
+            pPrice = array.get(phPrices, i)
+            pBar   = array.get(phBars, i)
+            if (bar_index - swingLen - pBar) >= eqMinSeparation and math.abs(high[swingLen] - pPrice) / pPrice * 100 <= eqTolerance
+                line.new(pBar, pPrice, bar_index - swingLen, high[swingLen], color=bearColor, style=line.style_dotted, width=2)
+                label.new(bar_index - swingLen, high[swingLen], "EQH (BSL)", style=label.style_label_down, color=color.new(bearColor, 70), textcolor=bearColor, size=size.tiny)
+                break
