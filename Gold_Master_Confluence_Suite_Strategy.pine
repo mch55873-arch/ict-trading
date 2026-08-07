@@ -1,0 +1,159 @@
+//@version=6
+strategy("Gold Master Confluence Suite Strategy Edition [GMCS-Merged]", shorttitle="GMCS-Strategy", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=1, currency=currency.USD, max_labels_count=500, max_lines_count=500, max_boxes_count=500)
+
+// ==========================================
+// --- INPUTS & CONFIGURATION ---
+// ==========================================
+smtPivotLen   = input.int(2, "SMT/Price Pivot Length", minval=1, maxval=5, group="1. Pivot Lengths (Zero-Lag)")
+rsiPivotLen   = input.int(2, "RSI Pivot Length", minval=1, maxval=5, group="1. Pivot Lengths (Zero-Lag)")
+cvdPivotLen   = input.int(3, "CVD Pivot Length", minval=1, maxval=10, group="1. Pivot Lengths (Zero-Lag)")
+deltaPivotLen = input.int(4, "Single-Bar Delta Pivot Length", minval=1, maxval=10, group="1. Pivot Lengths (Zero-Lag)")
+
+secSymbol  = input.symbol("OANDA:XAGUSD", "SMT Secondary Symbol (e.g. Silver for Gold)", group="2. SMT & DXY")
+enableSMT  = input.bool(true, "Enable Real-Time SMT Divergence", group="2. SMT & DXY")
+dxySymbol  = input.symbol("TVC:DXY", "DXY Dollar Index Symbol", group="2. SMT & DXY")
+enableDXY  = input.bool(true, "Enable DXY Tri-SMT Filter", group="2. SMT & DXY")
+
+rsiLen     = input.int(14, "RSI Length", minval=1, group="3. RSI Engine")
+showRegRsi = input.bool(true, "Show Regular RSI Divergence", group="3. RSI Engine")
+showHidRsi = input.bool(true, "Show Hidden RSI Divergence", group="3. RSI Engine")
+
+enableDelta      = input.bool(true, "Enable Single-Bar Delta Divergence", group="4. Order Flow")
+enableCVD        = input.bool(true, "Enable CVD Divergence", group="4. Order Flow")
+
+confluenceWindowBars    = input.int(6, "Confluence Match Window (bars)", minval=1, maxval=30, group="5. Confluence Engine")
+requireOrderFlowConfirm = input.bool(false, "Require CVD/Delta Confirmation for Auto Buy/Sell", group="5. Confluence Engine")
+
+slAtrMult = input.float(1.5, "Stop Loss ATR Multiplier", minval=0.1, step=0.1, group="6. Risk Management")
+tpAtrMult = input.float(3.0, "Take Profit ATR Multiplier", minval=0.1, step=0.1, group="6. Risk Management")
+
+// ==========================================
+// --- CALCULATIONS & TECHNICALS ---
+// ==========================================
+atrVal = ta.atr(14)
+rsi    = ta.rsi(close, rsiLen)
+
+[secHigh, secLow] = request.security(secSymbol, timeframe.period, [high, low], ignore_invalid_symbol=true)
+[dxyHigh, dxyLow] = request.security(dxySymbol, timeframe.period, [high, low], ignore_invalid_symbol=true)
+
+highLowDiff = high - low
+deltaRatio  = highLowDiff > 0 ? ((close - low) - (high - close)) / highLowDiff : 0.0
+approxBuyVol = volume * (deltaRatio + 1.0) / 2.0
+approxSellVol = volume - approxBuyVol
+barDelta = approxBuyVol - approxSellVol
+
+var float cvd = 0.0
+cvd := cvd + barDelta
+
+// Delta & CVD Pivots
+cPH = ta.pivothigh(cvd, cvdPivotLen, cvdPivotLen)
+cPL = ta.pivotlow(cvd, cvdPivotLen, cvdPivotLen)
+
+var float cvd_pl1 = na, var float cvd_pl2 = na
+var float cvd_price_pl1 = na, var float cvd_price_pl2 = na
+var float cvd_ph1 = na, var float cvd_ph2 = na
+var float cvd_price_ph1 = na, var float cvd_price_ph2 = na
+
+if not na(cPL)
+    cvd_pl2 := cvd_pl1, cvd_price_pl2 := cvd_price_pl1
+    cvd_pl1 := cvd[cvdPivotLen], cvd_price_pl1 := low[cvdPivotLen]
+
+if not na(cPH)
+    cvd_ph2 := cvd_ph1, cvd_price_ph2 := cvd_price_ph1
+    cvd_ph1 := cvd[cvdPivotLen], cvd_price_ph1 := high[cvdPivotLen]
+
+bool cvd_bull = not na(cPL) and not na(cvd_pl2) and cvd_price_pl1 < cvd_price_pl2 and cvd_pl1 > cvd_pl2
+bool cvd_bear = not na(cPH) and not na(cvd_ph2) and cvd_price_ph1 > cvd_price_ph2 and cvd_ph1 < cvd_ph2
+
+var int last_cvd_bull_bar = na
+var int last_cvd_bear_bar = na
+if cvd_bull
+    last_cvd_bull_bar := bar_index
+if cvd_bear
+    last_cvd_bear_bar := bar_index
+
+// SMT & DXY Pivots
+priPH = ta.pivothigh(high, smtPivotLen, smtPivotLen)
+priPL = ta.pivotlow(low, smtPivotLen, smtPivotLen)
+
+var float pri_pl1 = na, var float pri_pl2 = na
+var float sec_pl1 = na, var float sec_pl2 = na
+var float dxy_ph1 = na, var float dxy_ph2 = na
+var float pri_ph1 = na, var float pri_ph2 = na
+var float sec_ph1 = na, var float sec_ph2 = na
+var float dxy_pl1 = na, var float dxy_pl2 = na
+
+if not na(priPL)
+    pri_pl2 := pri_pl1, pri_pl1 := low[smtPivotLen]
+    sec_pl2 := sec_pl1, sec_pl1 := not na(secLow) ? secLow[smtPivotLen] : na
+    dxy_ph2 := dxy_ph1, dxy_ph1 := not na(dxyHigh) ? dxyHigh[smtPivotLen] : na
+
+if not na(priPH)
+    pri_ph2 := pri_ph1, pri_ph1 := high[smtPivotLen]
+    sec_ph2 := sec_ph1, sec_ph1 := not na(secHigh) ? secHigh[smtPivotLen] : na
+    dxy_pl2 := dxy_pl1, dxy_pl1 := not na(dxyLow) ? dxyLow[smtPivotLen] : na
+
+bool smt_b = enableSMT and not na(priPL) and not na(pri_pl2) and not na(sec_pl1) and (pri_pl1 <= pri_pl2 and sec_pl1 >= sec_pl2)
+bool dxy_b = enableDXY and not na(priPL) and not na(pri_pl2) and not na(dxy_ph1) and (pri_pl1 <= pri_pl2 and dxy_ph1 <= dxy_ph2)
+bool smt_s = enableSMT and not na(priPH) and not na(pri_ph2) and not na(sec_ph1) and (pri_ph1 >= pri_ph2 and sec_ph1 <= sec_ph2)
+bool dxy_s = enableDXY and not na(priPH) and not na(pri_ph2) and not na(dxy_pl1) and (pri_ph1 >= pri_ph2 and dxy_pl1 >= dxy_pl2)
+
+var int last_smt_bull_bar = na
+var int last_smt_bear_bar = na
+if smt_b or dxy_b
+    last_smt_bull_bar := bar_index
+if smt_s or dxy_s
+    last_smt_bear_bar := bar_index
+
+// RSI Pivots
+rsiPH = ta.pivothigh(rsi, rsiPivotLen, rsiPivotLen)
+rsiPL = ta.pivotlow(rsi, rsiPivotLen, rsiPivotLen)
+
+var float rsi_pl1 = na, var float rsi_pl2 = na
+var float rsi_price_pl1 = na, var float rsi_price_pl2 = na
+var float rsi_ph1 = na, var float rsi_ph2 = na
+var float rsi_price_ph1 = na, var float rsi_price_ph2 = na
+
+if not na(rsiPL)
+    rsi_pl2 := rsi_pl1, rsi_price_pl2 := rsi_price_pl1
+    rsi_pl1 := rsi[rsiPivotLen], rsi_price_pl1 := low[rsiPivotLen]
+
+if not na(rsiPH)
+    rsi_ph2 := rsi_ph1, rsi_price_ph2 := rsi_price_ph1
+    rsi_ph1 := rsi[rsiPivotLen], rsi_price_ph1 := high[rsiPivotLen]
+
+bool rsi_bull = not na(rsiPL) and not na(rsi_pl2) and showRegRsi and rsi_price_pl1 <= rsi_price_pl2 and rsi_pl1 > rsi_pl2
+bool rsi_bear = not na(rsiPH) and not na(rsi_ph2) and showRegRsi and rsi_price_ph1 >= rsi_price_ph2 and rsi_ph1 < rsi_ph2
+
+var int last_rsi_bull_bar = na
+var int last_rsi_bear_bar = na
+if rsi_bull
+    last_rsi_bull_bar := bar_index
+if rsi_bear
+    last_rsi_bear_bar := bar_index
+
+f_within(lBar) => not na(lBar) and (bar_index - lBar) <= confluenceWindowBars
+
+bool confluence_bull_now = ( (smt_b or dxy_b) and f_within(last_rsi_bull_bar) ) or ( rsi_bull and f_within(last_smt_bull_bar) )
+bool confluence_bear_now = ( (smt_s or dxy_s) and f_within(last_rsi_bear_bar) ) or ( rsi_bear and f_within(last_smt_bear_bar) )
+
+bool orderFlowBullRecent = f_within(last_cvd_bull_bar)
+bool orderFlowBearRecent = f_within(last_cvd_bear_bar)
+
+bool autoBuySignal  = confluence_bull_now and (not requireOrderFlowConfirm or orderFlowBullRecent)
+bool autoSellSignal = confluence_bear_now and (not requireOrderFlowConfirm or orderFlowBearRecent)
+
+// ==========================================
+// --- STRATEGY TESTER EXECUTION ---
+// ==========================================
+if autoBuySignal and strategy.position_size == 0 and barstate.isconfirmed
+    slVal = low - atrVal * slAtrMult
+    tpVal = close + atrVal * tpAtrMult
+    strategy.entry("GMCS Long", strategy.long)
+    strategy.exit("Exit GMCS Long", "GMCS Long", stop=slVal, limit=tpVal)
+
+if autoSellSignal and strategy.position_size == 0 and barstate.isconfirmed
+    slVal2 = high + atrVal * slAtrMult
+    tpVal2 = close - atrVal * tpAtrMult
+    strategy.entry("GMCS Short", strategy.short)
+    strategy.exit("Exit GMCS Short", "GMCS Short", stop=slVal2, limit=tpVal2)
