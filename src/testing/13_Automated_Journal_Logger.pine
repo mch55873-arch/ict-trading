@@ -1,0 +1,14 @@
+//@version=6
+// STEP 3 QA PROTOCOL: Automated 23-Column CSV Trade Journal Logger Engine
+// Repository: github.com/mch55873-arch/ict-trading/src/testing
+// Quality Guarantee: Non-Repainting Automated Log Output for Quantitative Analysis
+
+// ══════════════════════════════════════════════════════════════════
+//  23-COLUMN AUTOMATED TRADE JOURNAL LOGGER
+// ══════════════════════════════════════════════════════════════════
+
+f_logTradeToJournal(tradeId, sessStr, dirStr, htfBiasStr, sweepStr, fvgSize, obQuality, dispScore, confScore, atrVal, entryP, slP, tpP, exitP, rrRatio, rMultiple, durationBars, mfeR, maeR, exitReasonStr) =>
+    if barstate.isconfirmed
+        dayStr = dayofweek == dayofweek.monday ? "Mon" : dayofweek == dayofweek.tuesday ? "Tue" : dayofweek == dayofweek.wednesday ? "Wed" : dayofweek == dayofweek.thursday ? "Thu" : dayofweek == dayofweek.friday ? "Fri" : "Other"
+        logLine = str.tostring(tradeId) + ", " + syminfo.ticker + ", " + timeframe.period + ", " + sessStr + ", " + dayStr + ", " + dirStr + ", " + htfBiasStr + ", " + sweepStr + ", " + str.tostring(fvgSize, "#.##") + ", " + str.tostring(obQuality, "#") + "%, " + str.tostring(dispScore, "#") + "%, " + str.tostring(confScore, "#") + "%, " + str.tostring(atrVal, "#.##") + ", " + str.tostring(syminfo.mintick, "#.#####") + ", " + str.tostring(entryP, "#.##") + ", " + str.tostring(slP, "#.##") + ", " + str.tostring(tpP, "#.##") + ", " + str.tostring(exitP, "#.##") + ", 1:" + str.tostring(rrRatio, "#.#") + ", " + str.tostring(rMultiple, "+#.1") + "R, " + str.tostring(durationBars) + ", " + str.tostring(mfeR, "+#.1") + "R, " + str.tostring(maeR, "-#.1") + "R, " + exitReasonStr
+        log.info(logLine)
