@@ -1,0 +1,125 @@
+//@version=6
+strategy("ICT Production Engine v9.0 Strategy Edition", overlay=true, initial_capital=10000, default_qty_type=strategy.percent_of_equity, default_qty_value=1, currency=currency.USD, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
+
+// ══════════════════════════════════════════════════════════════════
+//  1. ENUMS & STRUCTS
+// ══════════════════════════════════════════════════════════════════
+int FSM_IDLE         = 0
+int FSM_SWEEP        = 1
+int FSM_DISPLACEMENT = 2
+int FSM_FVG          = 3
+int FSM_MSS          = 4
+int FSM_OB_ACTIVE    = 5
+int FSM_RETRACE      = 6
+int FSM_EXECUTION    = 7
+
+int DIR_NONE  = 0
+int DIR_LONG  = 1
+int DIR_SHORT = -1
+
+// ══════════════════════════════════════════════════════════════════
+//  2. INPUTS
+// ══════════════════════════════════════════════════════════════════
+swingLen        = input.int(8, "Major Swing Sensitivity", minval=2)
+internalLen     = input.int(3, "Internal Micro Sensitivity", minval=1)
+dispAtrMult     = input.float(1.3, "Displacement ATR Multiplier", minval=0.5)
+volMult         = input.float(1.1, "Volume Spike Multiplier", minval=0.8)
+fsmTimeoutBars  = input.int(30, "FSM State Timeout (Bars)", minval=10)
+fvgAtrFilter    = input.float(0.35, "Min FVG ATR Multiplier", minval=0.0)
+
+// ══════════════════════════════════════════════════════════════════
+//  3. TECHNICALS & DISPLACEMENT
+// ══════════════════════════════════════════════════════════════════
+atr          = ta.atr(14)
+avgVol       = ta.sma(volume, 20)
+isVolExp     = volume > avgVol * volMult
+body         = math.abs(close - open)
+candleRange  = high - low
+bodyRatio    = candleRange > 0 ? body / candleRange : 0.0
+prevRangeMax = math.max(high[1] - low[1], high[2] - low[2])
+isImpulse    = candleRange > prevRangeMax and bodyRatio >= 0.60
+isDisplace   = body > atr * dispAtrMult and isImpulse and isVolExp
+
+phSwing = ta.pivothigh(high, swingLen, swingLen)
+plSwing = ta.pivotlow(low, swingLen, swingLen)
+phInt   = ta.pivothigh(high, internalLen, internalLen)
+plInt   = ta.pivotlow(low, internalLen, internalLen)
+
+var float lastPH = na, var float lastPL = na
+var float lastIntPH = na, var float lastIntPL = na
+var bool phBroken = true, var bool plBroken = true
+
+if not na(phSwing)
+    lastPH := phSwing, phBroken := false
+if not na(plSwing)
+    lastPL := plSwing, plBroken := false
+if not na(phInt)
+    lastIntPH := phInt
+if not na(plInt)
+    lastIntPL := plInt
+
+// ══════════════════════════════════════════════════════════════════
+//  4. FSM STATE MACHINE
+// ══════════════════════════════════════════════════════════════════
+bool ev_bullSweep = not na(lastPL) and low < lastPL and close > lastPL
+bool ev_bearSweep = not na(lastPH) and high > lastPH and close < lastPH
+bool ev_bullGap   = low > high[2] and (low - high[2]) >= atr * fvgAtrFilter and isImpulse
+bool ev_bearGap   = high < low[2] and (low[2] - high) >= atr * fvgAtrFilter and isImpulse
+bool ev_bullMSS   = not na(lastIntPH) and close > lastIntPH and isDisplace and not phBroken
+bool ev_bearMSS   = not na(lastIntPL) and close < lastIntPL and isDisplace and not plBroken
+
+var int fsmState    = FSM_IDLE
+var int fsmDir      = DIR_NONE
+var int fsmStartBar = na
+var float setupSweepPrice = na
+
+bool resetFSM = false
+
+if fsmState != FSM_IDLE and not na(fsmStartBar) and (bar_index - fsmStartBar > fsmTimeoutBars) and strategy.position_size == 0
+    resetFSM := true
+
+var bool stateChangedThisBar = false
+stateChangedThisBar := false
+
+if fsmState == FSM_IDLE and not stateChangedThisBar
+    if ev_bullSweep
+        fsmState := FSM_SWEEP, fsmDir := DIR_LONG, fsmStartBar := bar_index, setupSweepPrice := low, stateChangedThisBar := true
+    else if ev_bearSweep
+        fsmState := FSM_SWEEP, fsmDir := DIR_SHORT, fsmStartBar := bar_index, setupSweepPrice := high, stateChangedThisBar := true
+
+if fsmState == FSM_SWEEP and not stateChangedThisBar and ev_displacement
+    fsmState := FSM_DISPLACEMENT, stateChangedThisBar := true
+
+if fsmState == FSM_DISPLACEMENT and not stateChangedThisBar and ((fsmDir == DIR_LONG and ev_bullGap) or (fsmDir == DIR_SHORT and ev_bearGap))
+    fsmState := FSM_FVG, stateChangedThisBar := true
+
+if fsmState == FSM_FVG and not stateChangedThisBar and ((fsmDir == DIR_LONG and ev_bullMSS) or (fsmDir == DIR_SHORT and ev_bearMSS))
+    fsmState := FSM_MSS, stateChangedThisBar := true
+
+if fsmState == FSM_MSS and not stateChangedThisBar
+    fsmState := FSM_OB_ACTIVE, stateChangedThisBar := true
+
+if fsmState == FSM_OB_ACTIVE and not stateChangedThisBar
+    fsmState := FSM_EXECUTION, stateChangedThisBar := true
+
+// ══════════════════════════════════════════════════════════════════
+//  5. STRATEGY TESTER EXECUTION (TRADINGVIEW OFFICIAL BACKTEST)
+// ══════════════════════════════════════════════════════════════════
+if fsmState == FSM_EXECUTION and strategy.position_size == 0 and barstate.isconfirmed
+    if fsmDir == DIR_LONG
+        slVal = setupSweepPrice
+        risk  = math.abs(close - slVal)
+        tpVal = close + risk * 3.0
+        strategy.entry("Long", strategy.long)
+        strategy.exit("Exit Long", "Long", stop=slVal, limit=tpVal)
+        resetFSM := true
+    else if fsmDir == DIR_SHORT
+        slVal2 = setupSweepPrice
+        risk2  = math.abs(slVal2 - close)
+        tpVal2 = close - risk2 * 3.0
+        strategy.entry("Short", strategy.short)
+        strategy.exit("Exit Short", "Short", stop=slVal2, limit=tpVal2)
+        resetFSM := true
+
+if resetFSM
+    fsmState := FSM_IDLE, fsmDir := DIR_NONE, fsmStartBar := na, setupSweepPrice := na

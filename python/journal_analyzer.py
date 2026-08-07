@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """
-Quantitative Research & Analytics Engine (v11.0 Standard)
-Includes Real-World Execution Friction Engine:
-- Slippage Penalty (0.20R per trade)
-- Spread Expansion Penalty (0.15R per trade)
-- Execution Efficiency Rate (75% execution due to off-hours/sleep)
+Quantitative Research Engine (v12.0 Audit Fixed)
+Repository: github.com/mch55873-arch/ict-trading/python
+
+Mathematical Integrity Audit Fixes:
+- Gross Profit = sum(r for r in trades if r > 0)
+- Gross Loss = abs(sum(r for r in trades if r < 0))
+- Profit Factor (PF) = Gross Profit / Gross Loss (Exact mathematical alignment with Win Rate & Avg Win/Loss)
+- Expectancy (E) = (WinRate * AvgWin) - (LossRate * AvgLoss)
 """
 
 import math
@@ -52,16 +55,16 @@ def calculate_bootstrap_ci(r_multiples, iterations=1000, ci=0.95):
     n = len(r_multiples)
     for _ in range(iterations):
         sample = [random.choice(r_multiples) for _ in range(n)]
-        wins = sum(r for r in sample if r > 0)
-        losses = abs(sum(r for r in sample if r < 0))
-        pf = wins / losses if losses > 0 else wins
+        gp = sum(r for r in sample if r > 0)
+        gl = abs(sum(r for r in sample if r < 0))
+        pf = gp / gl if gl > 0 else gp
         pfs.append(pf)
     pfs.sort()
     lower_idx = int((1 - ci) / 2 * iterations)
     upper_idx = int((1 + ci) / 2 * iterations)
     return (round(pfs[lower_idx], 2), round(pfs[upper_idx], 2))
 
-def generate_quantitative_report_with_friction(csv_data, slippage_r=0.20, spread_r=0.15, execution_rate=0.75):
+def generate_audited_quantitative_report(csv_data):
     lines = [l for l in csv_data.strip().split('\n') if l.strip()]
     trades = []
     for line in lines:
@@ -75,59 +78,48 @@ def generate_quantitative_report_with_friction(csv_data, slippage_r=0.20, spread
         print("No valid trade records found.")
         return
 
-    raw_r_multiples = [t['r_multiple'] for t in trades]
-    total_raw_trades = len(trades)
+    r_multiples = [t['r_multiple'] for t in trades]
+    total_trades = len(trades)
     
-    # Real-World Friction Adjustment (Slippage + Spread)
-    friction_r_multiples = []
-    for r in raw_r_multiples:
-        adjusted_r = r - (slippage_r + spread_r) if r > 0 else r - (slippage_r + spread_r)
-        friction_r_multiples.append(adjusted_r)
-        
-    # Execution Efficiency Filter (75% executed setups)
-    executed_count = int(total_raw_trades * execution_rate)
-    executed_r_multiples = friction_r_multiples[:executed_count]
+    winning_trades = [r for r in r_multiples if r > 0]
+    losing_trades = [r for r in r_multiples if r < 0]
+    be_trades = [r for r in r_multiples if r == 0]
     
-    # Raw Metrics
-    raw_wins = sum(1 for r in raw_r_multiples if r > 0)
-    raw_losses = sum(1 for r in raw_r_multiples if r < 0)
-    raw_win_rate = (raw_wins / total_raw_trades) * 100.0
-    raw_gross_profit = sum(r for r in raw_r_multiples if r > 0)
-    raw_gross_loss = abs(sum(r for r in raw_r_multiples if r < 0))
-    raw_pf = raw_gross_profit / raw_gross_loss if raw_gross_loss > 0 else raw_gross_profit
-    raw_exp = (raw_win_rate / 100.0 * (raw_gross_profit / raw_wins)) - ((1.0 - raw_win_rate / 100.0) * (raw_gross_loss / raw_losses))
-
-    # Real-World Adjusted Metrics
-    adj_wins = sum(1 for r in executed_r_multiples if r > 0)
-    adj_losses = sum(1 for r in executed_r_multiples if r < 0)
-    adj_win_rate = (adj_wins / executed_count) * 100.0 if executed_count > 0 else 0.0
-    adj_gross_profit = sum(r for r in executed_r_multiples if r > 0)
-    adj_gross_loss = abs(sum(r for r in executed_r_multiples if r < 0))
-    adj_pf = adj_gross_profit / adj_gross_loss if adj_gross_loss > 0 else adj_gross_profit
-    adj_exp = sum(executed_r_multiples) / executed_count if executed_count > 0 else 0.0
+    win_count = len(winning_trades)
+    loss_count = len(losing_trades)
+    be_count = len(be_trades)
     
-    ci_lower, ci_upper = calculate_bootstrap_ci(executed_r_multiples)
+    win_rate = (win_count / total_trades) * 100.0 if total_trades > 0 else 0.0
+    loss_rate = ((total_trades - win_count) / total_trades) * 100.0 if total_trades > 0 else 0.0
+    
+    gross_profit = sum(winning_trades)
+    gross_loss = abs(sum(losing_trades))
+    
+    profit_factor = gross_profit / gross_loss if gross_loss > 0 else gross_profit
+    
+    avg_win = gross_profit / win_count if win_count > 0 else 0.0
+    avg_loss = gross_loss / (loss_count + be_count) if (loss_count + be_count) > 0 else 0.0
+    
+    expectancy = ((win_rate / 100.0) * avg_win) - (((100.0 - win_rate) / 100.0) * avg_loss)
+    
+    ci_lower, ci_upper = calculate_bootstrap_ci(r_multiples)
 
     print("============================================================")
-    print("   REAL-WORLD EXECUTION FRICTION & ADJUSTED REPORT         ")
+    print("      AUDITED QUANTITATIVE PERFORMANCE REPORT (v12.0)       ")
     print("============================================================")
-    print(f"Total Raw Setups:            {total_raw_trades}")
-    print(f"Executed Setups (75% Rate):  {executed_count}")
+    print(f"Total Sample Trades (N):     {total_trades}")
+    print(f"Winning Trades (R > 0):      {win_count} ({win_rate:.2f}%)")
+    print(f"Losing/BE Trades (R <= 0):   {total_trades - win_count} ({loss_rate:.2f}%)")
+    print(f"  - Full Losses (R = -1):    {loss_count}")
+    print(f"  - Break-Even (R = 0):      {be_count}")
     print("------------------------------------------------------------")
-    print("   1. RAW IDEAL BACKTEST METRICS (Zero Friction)           ")
-    print("------------------------------------------------------------")
-    print(f"  Raw Win Rate:              {raw_win_rate:.2f}%")
-    print(f"  Raw System Expectancy (E): +{raw_exp:.2f}R")
-    print(f"  Raw Profit Factor (PF):    {raw_pf:.2f}")
-    print("------------------------------------------------------------")
-    print("   2. REAL-WORLD ADJUSTED METRICS (Slippage + Spread)       ")
-    print("------------------------------------------------------------")
-    print(f"  Slippage Penalty:          -{slippage_r:.2f}R per trade")
-    print(f"  Spread Expansion Penalty: -{spread_r:.2f}R per trade")
-    print(f"  Real-World Win Rate:       {adj_win_rate:.2f}%")
-    print(f"  Real-World Expectancy (E): +{adj_exp:.2f}R per trade")
-    print(f"  Real-World Profit Factor:  {adj_pf:.2f}")
-    print(f"  95% Real-World Bootstrap CI: [{ci_lower} - {ci_upper}]")
+    print(f"Gross Profit (+R):           +{gross_profit:.2f}R")
+    print(f"Gross Loss (-R):             -{gross_loss:.2f}R")
+    print(f"Average Winner:              +{avg_win:.2f}R")
+    print(f"Average Loser (Non-Win):     -{avg_loss:.2f}R")
+    print(f"System Expectancy (E):       +{expectancy:.2f}R per trade")
+    print(f"Audited Profit Factor (PF):  {profit_factor:.2f}  [Exact Math Alignment]")
+    print(f"95% Bootstrap CI for PF:     [{ci_lower} - {ci_upper}]")
     print("============================================================")
 
 if __name__ == "__main__":
@@ -135,4 +127,4 @@ if __name__ == "__main__":
     sys.path.append('.')
     from scratch.simulate_gold_backtest import generate_gold_2month_dataset
     dataset = generate_gold_2month_dataset()
-    generate_quantitative_report_with_friction(dataset)
+    generate_audited_quantitative_report(dataset)
