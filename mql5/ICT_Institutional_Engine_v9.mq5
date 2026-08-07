@@ -111,19 +111,21 @@ void OnTick()
    double range      = high1 - low1;
    double bodyRatio  = range > 0 ? body / range : 0.0;
    
-   double prevRangeMax = MathMax(iHigh(_Symbol, _Period, 2) - iLow(_Symbol, _Period, 2), iHigh(_Symbol, _Period, 3) - iLow(_Symbol, _Period, 3));
+   double range2 = iHigh(_Symbol, _Period, 2) - iLow(_Symbol, _Period, 2);
+   double range3 = iHigh(_Symbol, _Period, 3) - iLow(_Symbol, _Period, 3);
+   double prevRangeMax = MathMax(range2, range3);
    bool isImpulse = (range > prevRangeMax) && (bodyRatio >= 0.60);
    
-   long volBuf[];
+   double volBuf[];
    int volHandle = iVolumes(_Symbol, _Period, VOLUME_TICK);
    ArraySetAsSeries(volBuf, true);
    CopyBuffer(volHandle, 0, 0, 20, volBuf);
    
    double avgVol = 0;
-   for(int v=0; v<20; v++) avgVol += (double)volBuf[v];
+   for(int v=0; v<20; v++) avgVol += volBuf[v];
    avgVol /= 20.0;
    
-   bool isVolExp = (double)volBuf[1] > avgVol * InpVolMult;
+   bool isVolExp = volBuf[1] > avgVol * InpVolMult;
    bool isDisplacement = (body > atr * InpAtrMult) && isImpulse && isVolExp;
 
    if(!isDisplacement) return; // Strict Displacement Gate
