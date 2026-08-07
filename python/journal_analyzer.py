@@ -1,17 +1,10 @@
 #!/usr/bin/env python3
 """
-Quantitative Research & Analytics Engine (v10.0 Standard)
-Hedge Fund Two-Tier Stack: TradingView (Pine v6) ➔ CSV ➔ Python Engine
-
-Features Included:
-1. 23-Column CSV Trade Log Parser
-2. System Expectancy (E) & Empirical Profit Factor (PF)
-3. 1,000-Iteration 95% Bootstrap Confidence Intervals [PF_lower, PF_upper]
-4. Rolling 50-Trade Moving Expectancy (Edge Degradation Monitor)
-5. Session x Weekday Heatmap Matrix
-6. Monthly Performance Breakdown
-7. Consecutive Loss Distribution Matrix
-8. Equity Curve & Drawdown Curve Metrics
+Quantitative Research & Analytics Engine (v11.0 Standard)
+Includes Real-World Execution Friction Engine:
+- Slippage Penalty (0.20R per trade)
+- Spread Expansion Penalty (0.15R per trade)
+- Execution Efficiency Rate (75% execution due to off-hours/sleep)
 """
 
 import math
@@ -68,45 +61,7 @@ def calculate_bootstrap_ci(r_multiples, iterations=1000, ci=0.95):
     upper_idx = int((1 + ci) / 2 * iterations)
     return (round(pfs[lower_idx], 2), round(pfs[upper_idx], 2))
 
-def calculate_rolling_expectancy(r_multiples, window=20):
-    rolling_exp = []
-    for i in range(len(r_multiples)):
-        if i < window:
-            rolling_exp.append(round(sum(r_multiples[:i+1]) / (i+1), 2))
-        else:
-            sub = r_multiples[i-window+1:i+1]
-            rolling_exp.append(round(sum(sub) / window, 2))
-    return rolling_exp
-
-def calculate_consecutive_loss_distribution(r_multiples):
-    streaks = {}
-    current_streak = 0
-    for r in r_multiples:
-        if r < 0:
-            current_streak += 1
-        else:
-            if current_streak > 0:
-                streaks[current_streak] = streaks.get(current_streak, 0) + 1
-                current_streak = 0
-    if current_streak > 0:
-        streaks[current_streak] = streaks.get(current_streak, 0) + 1
-    return streaks
-
-def calculate_session_weekday_heatmap(trades):
-    matrix = {}
-    for t in trades:
-        key = (t['session'], t['weekday'])
-        if key not in matrix:
-            matrix[key] = {'wins': 0, 'losses': 0, 'total_r': 0.0}
-        r = t['r_multiple']
-        if r > 0:
-            matrix[key]['wins'] += 1
-        elif r < 0:
-            matrix[key]['losses'] += 1
-        matrix[key]['total_r'] += r
-    return matrix
-
-def generate_quantitative_report(csv_data):
+def generate_quantitative_report_with_friction(csv_data, slippage_r=0.20, spread_r=0.15, execution_rate=0.75):
     lines = [l for l in csv_data.strip().split('\n') if l.strip()]
     trades = []
     for line in lines:
@@ -120,55 +75,64 @@ def generate_quantitative_report(csv_data):
         print("No valid trade records found.")
         return
 
-    r_multiples = [t['r_multiple'] for t in trades]
-    total_trades = len(trades)
-    winning_trades = sum(1 for r in r_multiples if r > 0)
-    losing_trades = sum(1 for r in r_multiples if r < 0)
-    win_rate = (winning_trades / total_trades) * 100.0 if total_trades > 0 else 0.0
+    raw_r_multiples = [t['r_multiple'] for t in trades]
+    total_raw_trades = len(trades)
     
-    gross_profit = sum(r for r in r_multiples if r > 0)
-    gross_loss = abs(sum(r for r in r_multiples if r < 0))
-    profit_factor = gross_profit / gross_loss if gross_loss > 0 else gross_profit
+    # Real-World Friction Adjustment (Slippage + Spread)
+    friction_r_multiples = []
+    for r in raw_r_multiples:
+        adjusted_r = r - (slippage_r + spread_r) if r > 0 else r - (slippage_r + spread_r)
+        friction_r_multiples.append(adjusted_r)
+        
+    # Execution Efficiency Filter (75% executed setups)
+    executed_count = int(total_raw_trades * execution_rate)
+    executed_r_multiples = friction_r_multiples[:executed_count]
     
-    avg_win = gross_profit / winning_trades if winning_trades > 0 else 0.0
-    avg_loss = gross_loss / losing_trades if losing_trades > 0 else 0.0
-    expectancy = (win_rate / 100.0 * avg_win) - ((1.0 - win_rate / 100.0) * avg_loss)
+    # Raw Metrics
+    raw_wins = sum(1 for r in raw_r_multiples if r > 0)
+    raw_losses = sum(1 for r in raw_r_multiples if r < 0)
+    raw_win_rate = (raw_wins / total_raw_trades) * 100.0
+    raw_gross_profit = sum(r for r in raw_r_multiples if r > 0)
+    raw_gross_loss = abs(sum(r for r in raw_r_multiples if r < 0))
+    raw_pf = raw_gross_profit / raw_gross_loss if raw_gross_loss > 0 else raw_gross_profit
+    raw_exp = (raw_win_rate / 100.0 * (raw_gross_profit / raw_wins)) - ((1.0 - raw_win_rate / 100.0) * (raw_gross_loss / raw_losses))
+
+    # Real-World Adjusted Metrics
+    adj_wins = sum(1 for r in executed_r_multiples if r > 0)
+    adj_losses = sum(1 for r in executed_r_multiples if r < 0)
+    adj_win_rate = (adj_wins / executed_count) * 100.0 if executed_count > 0 else 0.0
+    adj_gross_profit = sum(r for r in executed_r_multiples if r > 0)
+    adj_gross_loss = abs(sum(r for r in executed_r_multiples if r < 0))
+    adj_pf = adj_gross_profit / adj_gross_loss if adj_gross_loss > 0 else adj_gross_profit
+    adj_exp = sum(executed_r_multiples) / executed_count if executed_count > 0 else 0.0
     
-    ci_lower, ci_upper = calculate_bootstrap_ci(r_multiples)
-    rolling_exp = calculate_rolling_expectancy(r_multiples)
-    loss_streaks = calculate_consecutive_loss_distribution(r_multiples)
-    heatmap = calculate_session_weekday_heatmap(trades)
+    ci_lower, ci_upper = calculate_bootstrap_ci(executed_r_multiples)
 
     print("============================================================")
-    print("      QUANTITATIVE RESEARCH ENGINE: PERFORMANCE REPORT     ")
+    print("   REAL-WORLD EXECUTION FRICTION & ADJUSTED REPORT         ")
     print("============================================================")
-    print(f"Total Sample Trades (N):     {total_trades}")
-    print(f"Win Rate (%):                {win_rate:.2f}%")
-    print(f"Average Win:                 +{avg_win:.2f}R")
-    print(f"Average Loss:                -{avg_loss:.2f}R")
-    print(f"System Expectancy (E):       +{expectancy:.2f}R per trade")
-    print(f"Empirical Profit Factor:     {profit_factor:.2f}")
-    print(f"95% Bootstrap CI for PF:     [{ci_lower} - {ci_upper}]")
-    print(f"Rolling 20-Trade Expectancy: {rolling_exp[-1]:+.2f}R (Current)")
+    print(f"Total Raw Setups:            {total_raw_trades}")
+    print(f"Executed Setups (75% Rate):  {executed_count}")
     print("------------------------------------------------------------")
-    print("   CONSECUTIVE LOSS STREAK DISTRIBUTION                     ")
+    print("   1. RAW IDEAL BACKTEST METRICS (Zero Friction)           ")
     print("------------------------------------------------------------")
-    for streak_len in sorted(loss_streaks.keys()):
-        print(f"  Streak Length {streak_len}: {loss_streaks[streak_len]} occurrence(s)")
+    print(f"  Raw Win Rate:              {raw_win_rate:.2f}%")
+    print(f"  Raw System Expectancy (E): +{raw_exp:.2f}R")
+    print(f"  Raw Profit Factor (PF):    {raw_pf:.2f}")
     print("------------------------------------------------------------")
-    print("   SESSION x WEEKDAY PERFORMANCE HEATMAP MATRIX             ")
+    print("   2. REAL-WORLD ADJUSTED METRICS (Slippage + Spread)       ")
     print("------------------------------------------------------------")
-    for (sess, day), stats in heatmap.items():
-        wr = (stats['wins'] / (stats['wins'] + stats['losses'])) * 100 if (stats['wins'] + stats['losses']) > 0 else 0.0
-        print(f"  [{sess} | {day}] Trades: {stats['wins']+stats['losses']} | WinRate: {wr:.1f}% | Net R: {stats['total_r']:+.1f}R")
+    print(f"  Slippage Penalty:          -{slippage_r:.2f}R per trade")
+    print(f"  Spread Expansion Penalty: -{spread_r:.2f}R per trade")
+    print(f"  Real-World Win Rate:       {adj_win_rate:.2f}%")
+    print(f"  Real-World Expectancy (E): +{adj_exp:.2f}R per trade")
+    print(f"  Real-World Profit Factor:  {adj_pf:.2f}")
+    print(f"  95% Real-World Bootstrap CI: [{ci_lower} - {ci_upper}]")
     print("============================================================")
 
 if __name__ == "__main__":
-    sample_data = """TradeID, Symbol, Timeframe, Session, Weekday, Direction, HTFBias, SweepType, FvgSize, ObQuality, DisplacementScore, ConfluenceScore, ATR, Spread, EntryPrice, SLPrice, TPPrice, ExitPrice, RR, RMultiple, DurationBars, MFE, MAE, ReasonClosed
-1, XAUUSD, M5, London KZ, Tue, LONG, Bullish, SSL Sweep, 2.45, 90%, 85%, 85%, 3.20, 0.25, 2380.50, 2374.20, 2405.00, 2399.40, 1:3.8, +3.0R, 18, +3.8R, -0.4R, CLOSED_TP2
-2, EURUSD, M15, NY Open, Wed, SHORT, Bearish, BSL Sweep, 0.0012, 80%, 75%, 75%, 0.0018, 0.0001, 1.0850, 1.0880, 1.0760, 1.0850, 1:3.0, 0.0R, 12, +1.8R, -0.2R, CLOSED_BE
-3, XAUUSD, M5, NY Silver Bullet, Thu, LONG, Bullish, SSL Sweep, 3.10, 95%, 90%, 90%, 3.50, 0.25, 2390.00, 2384.00, 2414.00, 2414.00, 1:4.0, +4.0R, 22, +4.0R, -0.1R, CLOSED_TP3_FINAL
-4, GBPUSD, M5, Asia KZ, Fri, SHORT, Bearish, BSL Sweep, 0.0008, 60%, 65%, 65%, 0.0015, 0.0001, 1.2720, 1.2750, 1.2660, 1.2750, 1:2.0, -1.0R, 8, +0.4R, -1.0R, CLOSED_SL
-5, XAUUSD, M5, London KZ, Mon, LONG, Bullish, SSL Sweep, 2.80, 85%, 80%, 80%, 3.10, 0.25, 2382.00, 2376.00, 2406.00, 2406.00, 1:4.0, +4.0R, 20, +4.0R, -0.2R, CLOSED_TP3_FINAL
-"""
-    generate_quantitative_report(sample_data)
+    import sys
+    sys.path.append('.')
+    from scratch.simulate_gold_backtest import generate_gold_2month_dataset
+    dataset = generate_gold_2month_dataset()
+    generate_quantitative_report_with_friction(dataset)
