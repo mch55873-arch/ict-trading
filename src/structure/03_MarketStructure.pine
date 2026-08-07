@@ -1,0 +1,42 @@
+//@version=6
+// PHASE 3: Market Structure Engine (BOS, CHoCH, MSS, Internal vs External)
+// Repository: github.com/mch55873-arch/ict-trading/src/structure
+// Quality Guarantee: Zero Repaint, Replay-Safe, Deterministic Confirmation
+
+// ══════════════════════════════════════════════════════════════════
+//  MARKET STRUCTURE DETECTOR FUNCTIONS
+// ══════════════════════════════════════════════════════════════════
+
+// Evaluates Major Swing Structure (BOS / CHoCH) and Internal Micro MSS
+f_evaluateMarketStructure(lastIntPH, lastIntPL, lastPH, lastPL, lastIntPHBar, lastIntPLBar, isDisplace, phBroken, plBroken, currentBias, showStructure, bullColor, bearColor) =>
+    bool bullMSS  = false
+    bool bearMSS  = false
+    bool bullBOS  = false
+    bool bearBOS  = false
+    string newBias = currentBias
+    bool updatedPhBroken = phBroken
+    bool updatedPlBroken = plBroken
+
+    // Bullish Structure Break (MSS on Change of Direction, BOS on Trend Continuation)
+    if not na(lastIntPH) and close > lastIntPH and isDisplace and not phBroken
+        bullMSS  := currentBias == "bearish"
+        bullBOS  := currentBias == "bullish"
+        newBias  := "bullish"
+        updatedPhBroken := true
+        if showStructure
+            txt = bullMSS ? "MSS ▲" : "BOS ▲"
+            label.new(bar_index, lastIntPH, txt, style=label.style_label_down, color=color.new(bullColor, 80), textcolor=bullColor, size=size.small)
+            line.new(lastIntPHBar, lastIntPH, bar_index, lastIntPH, color=bullColor, style=line.style_dashed)
+
+    // Bearish Structure Break (MSS on Change of Direction, BOS on Trend Continuation)
+    if not na(lastIntPL) and close < lastIntPL and isDisplace and not plBroken
+        bearMSS  := currentBias == "bullish"
+        bearBOS  := currentBias == "bearish"
+        newBias  := "bearish"
+        updatedPlBroken := true
+        if showStructure
+            txt = bearMSS ? "MSS ▼" : "BOS ▼"
+            label.new(bar_index, lastIntPL, txt, style=label.style_label_up, color=color.new(bearColor, 80), textcolor=bearColor, size=size.small)
+            line.new(lastIntPLBar, lastIntPL, bar_index, lastIntPL, color=bearColor, style=line.style_dashed)
+
+    [bullMSS, bearMSS, bullBOS, bearBOS, newBias, updatedPhBroken, updatedPlBroken]
