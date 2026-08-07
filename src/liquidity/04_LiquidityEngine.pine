@@ -1,0 +1,60 @@
+//@version=6
+// PHASE 2: Liquidity & Sweeps Engine
+// Repository: github.com/mch55873-arch/ict-trading/src/liquidity
+// Quality Guarantee: Zero Repaint, Replay-Safe, Deterministic Detection
+
+// ══════════════════════════════════════════════════════════════════
+//  LIQUIDITY DETECTOR FUNCTIONS
+// ══════════════════════════════════════════════════════════════════
+
+// Equal Highs & Equal Lows Detector with Minimum Bar Distance
+f_detectEqualHighsLows(phPrices, phBars, plPrices, plBars, swingLen, eqMinSeparation, eqTolerance, bearColor, bullColor) =>
+    bool eqhFound = false
+    bool eqlFound = false
+
+    // Equal Highs (BSL Liquidity Pool)
+    if array.size(phPrices) > 1
+        for i = 0 to array.size(phPrices) - 2
+            pPrice = array.get(phPrices, i)
+            pBar   = array.get(phBars, i)
+            if (bar_index - swingLen - pBar) >= eqMinSeparation and math.abs(high[swingLen] - pPrice) / pPrice * 100 <= eqTolerance
+                line.new(pBar, pPrice, bar_index - swingLen, high[swingLen], color=bearColor, style=line.style_dotted, width=2)
+                label.new(bar_index - swingLen, high[swingLen], "EQH (BSL Pool)", style=label.style_label_down, color=color.new(bearColor, 70), textcolor=bearColor, size=size.tiny)
+                eqhFound := true
+                break
+
+    // Equal Lows (SSL Liquidity Pool)
+    if array.size(plPrices) > 1
+        for i = 0 to array.size(plPrices) - 2
+            pPrice2 = array.get(plPrices, i)
+            pBar2   = array.get(plBars, i)
+            if (bar_index - swingLen - pBar2) >= eqMinSeparation and math.abs(low[swingLen] - pPrice2) / pPrice2 * 100 <= eqTolerance
+                line.new(pBar2, pPrice2, bar_index - swingLen, low[swingLen], color=bullColor, style=line.style_dotted, width=2)
+                label.new(bar_index - swingLen, low[swingLen], "EQL (SSL Pool)", style=label.style_label_up, color=color.new(bullColor, 70), textcolor=bullColor, size=size.tiny)
+                eqlFound := true
+                break
+    [eqhFound, eqlFound]
+
+// Liquidity Sweep & Raid Classification Engine
+f_evaluateLiquiditySweep(lastPH, lastPL, lastPHBar, lastPLBar, bullColor, bearColor, showSweeps) =>
+    bool bullSweep = false
+    bool bearSweep = false
+    float sweepPrice = na
+
+    // SSL Liquidity Sweep (Bullish Signal Trigger)
+    if not na(lastPL) and low < lastPL and close > lastPL
+        bullSweep  := true
+        sweepPrice := low
+        if showSweeps
+            label.new(bar_index, low, "SSL Sweep ▲", style=label.style_label_up, color=color.new(bullColor, 20), textcolor=bullColor, size=size.tiny)
+            line.new(lastPLBar, lastPL, bar_index, low, color=bullColor, style=line.style_dotted)
+
+    // BSL Liquidity Sweep (Bearish Signal Trigger)
+    if not na(lastPH) and high > lastPH and close < lastPH
+        bearSweep  := true
+        sweepPrice := high
+        if showSweeps
+            label.new(bar_index, high, "BSL Sweep ▼", style=label.style_label_down, color=color.new(bearColor, 20), textcolor=bearColor, size=size.tiny)
+            line.new(lastPHBar, lastPH, bar_index, high, color=bearColor, style=line.style_dotted)
+
+    [bullSweep, bearSweep, sweepPrice]
