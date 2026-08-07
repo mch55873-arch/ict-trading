@@ -1,7 +1,11 @@
 //@version=6
-// MODULE 1: Types, Enums & Core Utilities
+// PHASE 1: Core Foundation, Enums, UDTs, Event Bus & Deterministic FSM Engine
 // Repository: github.com/mch55873-arch/ict-trading
+// Quality Guarantee: Zero Repaint, Replay-Safe, Deterministic Single Transition
 
+// ══════════════════════════════════════════════════════════════════
+//  1. ENUMS & CONSTANTS
+// ══════════════════════════════════════════════════════════════════
 int FSM_IDLE         = 0
 int FSM_SWEEP        = 1
 int FSM_DISPLACEMENT = 2
@@ -15,6 +19,9 @@ int DIR_NONE  = 0
 int DIR_LONG  = 1
 int DIR_SHORT = -1
 
+// ══════════════════════════════════════════════════════════════════
+//  2. USER-DEFINED TYPES (UDTs)
+// ══════════════════════════════════════════════════════════════════
 type FvgZone
     box   b
     bool  isBull
@@ -32,7 +39,7 @@ type ObZone
     int   stage // 0: Fresh, 1: Partial, 2: Full 50%, 3: Breaker, 4: Invalidated
 
 type Trade
-    int   direction
+    int   direction // DIR_LONG or DIR_SHORT
     float entryPrice
     float slPrice
     float partialTpPrice
@@ -41,11 +48,44 @@ type Trade
     bool  active
     bool  partialTaken
     bool  isBreakEven
-    string status
+    string status  // "OPEN", "PARTIAL_TP", "CLOSED_TP", "CLOSED_SL", "INVALIDATED"
 
+// ══════════════════════════════════════════════════════════════════
+//  3. CORE UTILITIES & GARBAGE COLLECTION
+// ══════════════════════════════════════════════════════════════════
 f_trimBoxes(arr, mx) =>
     while array.size(arr) > mx
         box.delete(array.shift(arr))
 
 f_getFsmStateName(st) =>
-    st == 0 ? "IDLE" : st == 1 ? "SWEEP" : st == 2 ? "DISPLACEMENT" : st == 3 ? "FVG_QUALIFIED" : st == 4 ? "MSS_SHIFT" : st == 5 ? "OB_ACTIVE" : st == 6 ? "RETRACE" : st == 7 ? "EXECUTION" : "UNKNOWN"
+    st == FSM_IDLE ? "IDLE" : st == FSM_SWEEP ? "SWEEP" : st == FSM_DISPLACEMENT ? "DISPLACEMENT" : st == FSM_FVG ? "FVG_QUALIFIED" : st == FSM_MSS ? "MSS_SHIFT" : st == FSM_OB_ACTIVE ? "OB_ACTIVE" : st == FSM_RETRACE ? "RETRACE" : st == FSM_EXECUTION ? "EXECUTION" : "UNKNOWN"
+
+// ══════════════════════════════════════════════════════════════════
+//  4. FSM ENGINE & STATE WIPING RESET
+// ══════════════════════════════════════════════════════════════════
+var int fsmState    = FSM_IDLE
+var int fsmDir      = DIR_NONE
+var int fsmStartBar = na
+
+var float setupSweepPrice     = na
+var float bearLegClusterTop   = na
+var float bullLegClusterBot   = na
+var int   lastSweepBar        = na
+var int   lastDisplacementBar = na
+var int   lastFvgCreatedBar   = na
+var int   lastMssBar          = na
+var int   lastCisdBar         = na
+
+var Trade activeTrade = Trade.new(DIR_NONE, na, na, na, na, na, false, false, false, "NONE")
+
+f_resetFSM() =>
+    fsmState            := FSM_IDLE
+    fsmDir              := DIR_NONE
+    fsmStartBar         := na
+    setupSweepPrice     := na
+    bearLegClusterTop   := na
+    bullLegClusterBot   := na
+    lastSweepBar        := na
+    lastDisplacementBar := na
+    lastMssBar          := na
+    lastCisdBar         := na
