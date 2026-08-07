@@ -1,0 +1,593 @@
+//@version=6
+indicator("ICT Ultimate Institutional Engine v8.0 | Production Grade", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
+
+// ══════════════════════════════════════════════════════════════════
+//  1. ENUMS & CONSTANTS
+// ══════════════════════════════════════════════════════════════════
+int FSM_IDLE         = 0
+int FSM_SWEEP        = 1
+int FSM_DISPLACEMENT = 2
+int FSM_FVG          = 3
+int FSM_MSS          = 4
+int FSM_OB_ACTIVE    = 5
+int FSM_RETRACE      = 6
+int FSM_EXECUTION    = 7
+
+int DIR_NONE  = 0
+int DIR_LONG  = 1
+int DIR_SHORT = -1
+
+// ══════════════════════════════════════════════════════════════════
+//  2. STRUCTS & TYPES
+// ══════════════════════════════════════════════════════════════════
+type FvgZone
+    box   b
+    bool  isBull
+    bool  isInverted
+    bool  isRetested
+    int   createdBar
+
+type ObZone
+    box   b
+    bool  isBull
+    int   barIdx
+    float top
+    float bot
+    float meanThreshold
+    int   stage // 0: Fresh, 1: Partial, 2: Full 50%, 3: Breaker, 4: Invalidated
+
+type Trade
+    int   direction // DIR_LONG or DIR_SHORT
+    float entryPrice
+    float slPrice
+    float partialTpPrice
+    float finalTpPrice
+    int   entryBar
+    bool  active
+    bool  partialTaken
+    bool  isBreakEven
+    string status  // "OPEN", "PARTIAL_TP", "CLOSED_TP", "CLOSED_SL", "INVALIDATED"
+
+// ══════════════════════════════════════════════════════════════════
+//  3. INPUTS
+// ══════════════════════════════════════════════════════════════════
+g_l1            = "Layer 1: Dual Structure & FSM Engine"
+swingLen        = input.int(8, "Major Swing Sensitivity", minval=2, group=g_l1)
+internalLen     = input.int(3, "Internal Micro Sensitivity", minval=1, group=g_l1)
+useDispFilter   = input.bool(true, "Require Displacement & Volume Filter", group=g_l1)
+dispAtrMult     = input.float(1.3, "Displacement ATR Multiplier", minval=0.5, group=g_l1)
+volMult         = input.float(1.1, "Volume Spike Multiplier", minval=0.8, group=g_l1)
+showStructure   = input.bool(true, "Show MSS / BOS Labels", group=g_l1)
+showCISD        = input.bool(true, "Show Entire Delivery Cluster CISD", group=g_l1)
+fsmTimeoutBars  = input.int(30, "FSM State Timeout (Bars)", minval=10, maxval=100, group=g_l1)
+bullColor       = input.color(color.new(#089981, 0), "Bullish Color", group=g_l1)
+bearColor       = input.color(color.new(#f23645, 0), "Bearish Color", group=g_l1)
+
+g_l2            = "Layer 2: Institutional Liquidity & HTF Hierarchy"
+showSweeps      = input.bool(true, "Show Liquidity Sweeps (BSL/SSL)", group=g_l2)
+showEQHL        = input.bool(true, "Show Equal Highs / Lows (EQH/EQL)", group=g_l2)
+eqTolerance     = input.float(0.08, "EQH/EQL Tolerance %", minval=0.01, group=g_l2)
+eqMinSeparation = input.int(12, "EQH/EQL Min Bar Distance", minval=3, group=g_l2)
+showHTFLevels   = input.bool(true, "Show Persistent HTF Levels (PDH/PDL/PWH/PWL/DO)", group=g_l2)
+
+g_l3            = "Layer 3: Stateful POIs & OTE Zone"
+showOB          = input.bool(true, "Show Displacement Origin OBs", group=g_l3)
+maxObCount      = input.int(5, "Max Active OBs", minval=1, maxval=15, group=g_l3)
+showBreaker     = input.bool(true, "Show Validated Breakers", group=g_l3)
+
+showFVG         = input.bool(true, "Show Qualified Volume FVGs", group=g_l3)
+fvgAtrFilter    = input.float(0.35, "Min FVG ATR Multiplier", minval=0.0, group=g_l3)
+showIFVG        = input.bool(true, "Show Retest-Confirmed IFVGs", group=g_l3)
+maxFvgCount     = input.int(6, "Max Active FVGs", minval=1, maxval=20, group=g_l3)
+
+g_l4            = "Layer 4: Time (PKT), Trade Management & Dashboard"
+showZones       = input.bool(true, "Show Anchored Premium / Discount Range", group=g_l4)
+showKillzones   = input.bool(true, "Highlight ICT Killzones (PKT)", group=g_l4)
+sessAsia        = input.session("0500-1400", "Asian Session (05:00 - 14:00 PKT)", group=g_l4)
+sessLondon      = input.session("1200-1500", "London Killzone (12:00 - 15:00 PKT)", group=g_l4)
+sessNY          = input.session("1700-2000", "NY Open Killzone (17:00 - 20:00 PKT)", group=g_l4)
+sessSilverB     = input.session("1900-2000", "NY Silver Bullet (19:00 - 20:00 PKT)", group=g_l4)
+
+showExecution   = input.bool(true, "Show FSM Execution Signals + Risk Target", group=g_l4)
+showDashboard   = input.bool(true, "Show Institutional Dashboard", group=g_l4)
+
+// ══════════════════════════════════════════════════════════════════
+//  4. GARBAGE COLLECTION & HELPERS
+// ══════════════════════════════════════════════════════════════════
+f_trimBoxes(arr, mx) =>
+    while array.size(arr) > mx
+        box.delete(array.shift(arr))
+
+f_getFsmStateName(st) =>
+    st == FSM_IDLE ? "IDLE" : st == FSM_SWEEP ? "SWEEP" : st == FSM_DISPLACEMENT ? "DISPLACEMENT" : st == FSM_FVG ? "FVG_QUALIFIED" : st == FSM_MSS ? "MSS_SHIFT" : st == FSM_OB_ACTIVE ? "OB_ACTIVE" : st == FSM_RETRACE ? "RETRACE" : st == FSM_EXECUTION ? "EXECUTION" : "UNKNOWN"
+
+// ══════════════════════════════════════════════════════════════════
+//  5. CORE TECHNICALS, VOLUME & ATR DISPLACEMENT
+// ══════════════════════════════════════════════════════════════════
+atr          = ta.atr(14)
+avgVol       = ta.sma(volume, 20)
+isVolExp     = volume > avgVol * volMult
+
+body         = math.abs(close - open)
+candleRange  = high - low
+bodyRatio    = candleRange > 0 ? body / candleRange : 0.0
+
+prevRangeMax = math.max(high[1] - low[1], high[2] - low[2])
+isImpulse    = candleRange > prevRangeMax and bodyRatio >= 0.60
+isDisplace   = not useDispFilter or (body > atr * dispAtrMult and isImpulse and isVolExp)
+
+phSwing = ta.pivothigh(high, swingLen, swingLen)
+plSwing = ta.pivotlow(low, swingLen, swingLen)
+phInt   = ta.pivothigh(high, internalLen, internalLen)
+plInt   = ta.pivotlow(low, internalLen, internalLen)
+
+var float lastPH = na, var int lastPHBar = na
+var float lastPL = na, var int lastPLBar = na
+var float lastIntPH = na, var int lastIntPHBar = na
+var float lastIntPL = na, var int lastIntPLBar = na
+
+var bool phBroken = true
+var bool plBroken = true
+var string bias   = "neutral"
+
+var float dealingRangeHigh = na
+var float dealingRangeLow  = na
+
+var float[] phPrices = array.new_float()
+var int[]   phBars   = array.new_int()
+var float[] plPrices = array.new_float()
+var int[]   plBars   = array.new_int()
+
+if not na(phSwing)
+    lastPH := phSwing, lastPHBar := bar_index - swingLen
+    phBroken := false
+    array.push(phPrices, phSwing), array.push(phBars, bar_index - swingLen)
+    if array.size(phPrices) > 40
+        array.shift(phPrices), array.shift(phBars)
+
+if not na(plSwing)
+    lastPL := plSwing, lastPLBar := bar_index - swingLen
+    plBroken := false
+    array.push(plPrices, plSwing), array.push(plBars, bar_index - swingLen)
+    if array.size(plPrices) > 40
+        array.shift(plPrices), array.shift(plBars)
+
+if not na(phInt)
+    lastIntPH    := phInt
+    lastIntPHBar := bar_index - internalLen
+
+if not na(plInt)
+    lastIntPL    := plInt
+    lastIntPLBar := bar_index - internalLen
+
+// ══════════════════════════════════════════════════════════════════
+//  6. MODULAR EVENT BUS ENGINE WITH TIMESTAMPS
+// ══════════════════════════════════════════════════════════════════
+bool ev_bullSweep    = false
+bool ev_bearSweep    = false
+bool ev_displacement = isDisplace
+bool ev_bullGap      = low > high[2] and (low - high[2]) >= atr * fvgAtrFilter and isImpulse
+bool ev_bearGap      = high < low[2] and (low[2] - high) >= atr * fvgAtrFilter and isImpulse
+bool ev_bullMSS      = false
+bool ev_bearMSS      = false
+bool ev_bullCISD     = false
+bool ev_bearCISD     = false
+
+var int lastSweepBar        = na
+var int lastDisplacementBar = na
+var int lastFvgCreatedBar   = na
+var int lastMssBar          = na
+var int lastCisdBar         = na
+
+var float bearLegClusterTop = na
+var float bullLegClusterBot = na
+
+var float setupSweepPrice   = na // Pre-trade Frozen Setup Sweep Price
+
+if not na(lastPL) and low < lastPL and close > lastPL
+    ev_bullSweep := true
+    lastSweepBar := bar_index
+    highestOpen = open[1]
+    for i = 1 to 8
+        if open[i] > close[i]
+            highestOpen := math.max(highestOpen, open[i])
+    bearLegClusterTop := highestOpen
+
+if not na(lastPH) and high > lastPH and close < lastPH
+    ev_bearSweep := true
+    lastSweepBar := bar_index
+    lowestOpen = open[1]
+    for i = 1 to 8
+        if open[i] < close[i]
+            lowestOpen := math.min(lowestOpen, open[i])
+    bullLegClusterBot := lowestOpen
+
+if isDisplace
+    lastDisplacementBar := bar_index
+
+if not na(lastIntPH) and close > lastIntPH and isDisplace and not phBroken
+    ev_bullMSS := true
+    bias       := "bullish"
+    phBroken   := true
+    lastMssBar := bar_index
+    dealingRangeHigh := high
+    dealingRangeLow  := nz(lastPL, low)
+
+if not na(lastIntPL) and close < lastIntPL and isDisplace and not plBroken
+    ev_bearMSS := true
+    bias       := "bearish"
+    plBroken   := true
+    lastMssBar := bar_index
+    dealingRangeLow  := low
+    dealingRangeHigh := nz(lastPH, high)
+
+if not na(bearLegClusterTop) and close > bearLegClusterTop and close[1] <= bearLegClusterTop
+    ev_bullCISD := true
+    lastCisdBar := bar_index
+    bearLegClusterTop := na
+
+if not na(bullLegClusterBot) and close < bullLegClusterBot and close[1] >= bullLegClusterBot
+    ev_bearCISD := true
+    lastCisdBar := bar_index
+    bullLegClusterBot := na
+
+// ══════════════════════════════════════════════════════════════════
+//  7. UNIFIED DETERMINISTIC FSM ENGINE WITH COMPLETE MEMORY WIPING
+// ══════════════════════════════════════════════════════════════════
+var int fsmState    = FSM_IDLE
+var int fsmDir      = DIR_NONE
+var int fsmStartBar = na
+
+var Trade activeTrade = Trade.new(DIR_NONE, na, na, na, na, na, false, false, false, "NONE")
+
+// Complete State & Memory Wiping Reset Function
+f_resetFSM() =>
+    fsmState            := FSM_IDLE
+    fsmDir              := DIR_NONE
+    fsmStartBar         := na
+    setupSweepPrice     := na
+    bearLegClusterTop   := na
+    bullLegClusterBot   := na
+    lastSweepBar        := na
+    lastDisplacementBar := na
+    lastMssBar          := na
+    lastCisdBar         := na
+
+// Timeout Check (Ignored if Trade is Active)
+if fsmState != FSM_IDLE and not na(fsmStartBar) and (bar_index - fsmStartBar > fsmTimeoutBars) and not activeTrade.active
+    f_resetFSM()
+
+// Invalidation Check
+if fsmState != FSM_IDLE and not activeTrade.active
+    if fsmDir == DIR_LONG and ev_bearSweep
+        f_resetFSM()
+    else if fsmDir == DIR_SHORT and ev_bullSweep
+        f_resetFSM()
+
+// Deterministic Single Transition System (1 transition per bar max)
+var bool stateChangedThisBar = false
+stateChangedThisBar := false
+
+if fsmState == FSM_IDLE and not stateChangedThisBar
+    if ev_bullSweep
+        fsmState    := FSM_SWEEP
+        fsmDir      := DIR_LONG
+        fsmStartBar := bar_index
+        setupSweepPrice := low // Freeze setup sweep price immediately
+        stateChangedThisBar := true
+    else if ev_bearSweep
+        fsmState    := FSM_SWEEP
+        fsmDir      := DIR_SHORT
+        fsmStartBar := bar_index
+        setupSweepPrice := high // Freeze setup sweep price immediately
+        stateChangedThisBar := true
+
+if fsmState == FSM_SWEEP and not stateChangedThisBar
+    if ev_displacement
+        fsmState := FSM_DISPLACEMENT
+        stateChangedThisBar := true
+
+if fsmState == FSM_DISPLACEMENT and not stateChangedThisBar
+    if (fsmDir == DIR_LONG and ev_bullGap) or (fsmDir == DIR_SHORT and ev_bearGap)
+        fsmState := FSM_FVG
+        stateChangedThisBar := true
+
+if fsmState == FSM_FVG and not stateChangedThisBar
+    if (fsmDir == DIR_LONG and ev_bullMSS) or (fsmDir == DIR_SHORT and ev_bearMSS)
+        fsmState := FSM_MSS
+        stateChangedThisBar := true
+
+if fsmState == FSM_MSS and not stateChangedThisBar
+    fsmState := FSM_OB_ACTIVE
+    stateChangedThisBar := true
+
+// ══════════════════════════════════════════════════════════════════
+//  8. QUALIFIED DISPLACEMENT-ORIGIN POI ENGINE
+// ══════════════════════════════════════════════════════════════════
+var FvgZone[] fvgZones = array.new<FvgZone>()
+
+// Index-Hashed FVG Creation
+if showFVG and ev_bullGap and lastFvgCreatedBar != bar_index
+    fb = box.new(bar_index[2], low, bar_index, high[2], border_color=na, bgcolor=color.new(bullColor, 88), text="FVG", text_size=size.tiny, text_color=bullColor)
+    array.push(fvgZones, FvgZone.new(fb, true, false, false, bar_index))
+    lastFvgCreatedBar := bar_index
+    if array.size(fvgZones) > maxFvgCount
+        FvgZone oldF = array.shift(fvgZones)
+        box.delete(oldF.b)
+
+if showFVG and ev_bearGap and lastFvgCreatedBar != bar_index
+    fb2 = box.new(bar_index[2], low[2], bar_index, high, border_color=na, bgcolor=color.new(bearColor, 88), text="FVG", text_size=size.tiny, text_color=bearColor)
+    array.push(fvgZones, FvgZone.new(fb2, false, false, false, bar_index))
+    lastFvgCreatedBar := bar_index
+    if array.size(fvgZones) > maxFvgCount
+        FvgZone oldF2 = array.shift(fvgZones)
+        box.delete(oldF2.b)
+
+// One-Shot Gated OB Creation (Exact Displacement Origin Scanner)
+bool justEnteredOBState = (fsmState == FSM_OB_ACTIVE and fsmState[1] != FSM_OB_ACTIVE)
+
+var ObZone[] bullOBs      = array.new<ObZone>()
+var ObZone[] bearOBs      = array.new<ObZone>()
+var box[]    breakerBoxes = array.new_box()
+
+if showOB and justEnteredOBState and fsmDir == DIR_LONG
+    int dispOriginOffset = bar_index - nz(lastDisplacementBar, bar_index)
+    int obIdx = na
+    for i = math.max(1, dispOriginOffset) to dispOriginOffset + 10
+        if close[i] < open[i]
+            obIdx := i
+            break
+    if not na(obIdx)
+        top = high[obIdx], bot = low[obIdx], meanVal = (top + bot) / 2
+        b   = box.new(bar_index[obIdx], top, bar_index, bot, border_color=bullColor, bgcolor=color.new(bullColor, 85), extend=extend.right, text="Origin OB", text_size=size.tiny, text_color=bullColor)
+        array.push(bullOBs, ObZone.new(b, true, bar_index[obIdx], top, bot, meanVal, 0))
+        if array.size(bullOBs) > maxObCount
+            ObZone old = array.shift(bullOBs)
+            box.delete(old.b)
+
+if showOB and justEnteredOBState and fsmDir == DIR_SHORT
+    int dispOriginOffset2 = bar_index - nz(lastDisplacementBar, bar_index)
+    int obIdx2 = na
+    for i = math.max(1, dispOriginOffset2) to dispOriginOffset2 + 10
+        if close[i] > open[i]
+            obIdx2 := i
+            break
+    if not na(obIdx2)
+        top2 = high[obIdx2], bot2 = low[obIdx2], meanVal2 = (top2 + bot2) / 2
+        b2   = box.new(bar_index[obIdx2], top2, bar_index, bot2, border_color=bearColor, bgcolor=color.new(bearColor, 85), extend=extend.right, text="Origin OB", text_size=size.tiny, text_color=bearColor)
+        array.push(bearOBs, ObZone.new(b2, false, bar_index[obIdx2], top2, bot2, meanVal2, 0))
+        if array.size(bearOBs) > maxObCount
+            ObZone old2 = array.shift(bearOBs)
+            box.delete(old2.b)
+
+// 5-Stage OB Lifecycle Engine
+if array.size(bullOBs) > 0
+    for i = array.size(bullOBs) - 1 to 0
+        obZone = array.get(bullOBs, i)
+        if low <= obZone.top and low > obZone.meanThreshold and obZone.stage == 0
+            obZone.stage := 1
+            box.set_bgcolor(obZone.b, color.new(bullColor, 92))
+        else if low <= obZone.meanThreshold and close >= obZone.bot and obZone.stage <= 1
+            obZone.stage := 2
+            box.set_bgcolor(obZone.b, color.new(color.gray, 90))
+        else if close < obZone.bot
+            if showBreaker and ev_bearMSS
+                obZone.stage := 3 // Breaker
+                box.set_border_color(obZone.b, bearColor)
+                box.set_bgcolor(obZone.b, color.new(bearColor, 85))
+                box.set_text(obZone.b, "Breaker Block")
+                array.push(breakerBoxes, obZone.b)
+                f_trimBoxes(breakerBoxes, maxObCount)
+            else
+                obZone.stage := 4 // Invalidated
+                box.delete(obZone.b)
+            array.remove(bullOBs, i)
+
+if array.size(bearOBs) > 0
+    for i = array.size(bearOBs) - 1 to 0
+        obZone2 = array.get(bearOBs, i)
+        if high >= obZone2.bot and high < obZone2.meanThreshold and obZone2.stage == 0
+            obZone2.stage := 1
+            box.set_bgcolor(obZone2.b, color.new(bearColor, 92))
+        else if high >= obZone2.meanThreshold and close <= obZone2.top and obZone2.stage <= 1
+            obZone2.stage := 2
+            box.set_bgcolor(obZone2.b, color.new(color.gray, 90))
+        else if close > obZone2.top
+            if showBreaker and ev_bullMSS
+                obZone2.stage := 3
+                box.set_border_color(obZone2.b, bullColor)
+                box.set_bgcolor(obZone2.b, color.new(bullColor, 85))
+                box.set_text(obZone2.b, "Breaker Block")
+                array.push(breakerBoxes, obZone2.b)
+                f_trimBoxes(breakerBoxes, maxObCount)
+            else
+                obZone2.stage := 4
+                box.delete(obZone2.b)
+            array.remove(bearOBs, i)
+
+// Retest-Confirmed IFVG Engine
+if array.size(fvgZones) > 0
+    for i = array.size(fvgZones) - 1 to 0
+        fz = array.get(fvgZones, i)
+        if not fz.isInverted
+            if fz.isBull and close < box.get_bottom(fz.b)
+                fz.isInverted := true
+                box.set_bgcolor(fz.b, color.new(bearColor, 90))
+                box.set_border_color(fz.b, bearColor)
+                box.set_text(fz.b, "IFVG (Pending)")
+            else if not fz.isBull and close > box.get_top(fz.b)
+                fz.isInverted := true
+                box.set_bgcolor(fz.b, color.new(bullColor, 90))
+                box.set_border_color(fz.b, bullColor)
+                box.set_text(fz.b, "IFVG (Pending)")
+            else
+                box.set_right(fz.b, bar_index)
+        else if fz.isInverted and not fz.isRetested
+            if fz.isBull and high >= box.get_bottom(fz.b)
+                fz.isRetested := true
+                box.set_text(fz.b, "Confirmed IFVG ▼")
+            else if not fz.isBull and low <= box.get_top(fz.b)
+                fz.isRetested := true
+                box.set_text(fz.b, "Confirmed IFVG ▲")
+
+// FSM Retrace State Transition Check
+if fsmState == FSM_OB_ACTIVE and not stateChangedThisBar
+    if fsmDir == DIR_LONG and array.size(bullOBs) > 0
+        ObZone activeOB = array.get(bullOBs, array.size(bullOBs) - 1)
+        if low <= activeOB.top and close >= activeOB.bot
+            fsmState := FSM_RETRACE
+            stateChangedThisBar := true
+    else if fsmDir == DIR_SHORT and array.size(bearOBs) > 0
+        ObZone activeOB2 = array.get(bearOBs, array.size(bearOBs) - 1)
+        if high >= activeOB2.bot and close <= activeOB2.top
+            fsmState := FSM_RETRACE
+            stateChangedThisBar := true
+
+// Persistent HTF Reference Levels
+var line linePDH = na, var line linePDL = na, var line linePWH = na, var line linePWL = na, var line lineDO = na
+var label lblPDH = na, var label lblPDL = na, var label lblPWH = na, var label lblPWL = na
+
+if showHTFLevels and barstate.islast
+    [pdh, pdl, pdo] = request.security(syminfo.tickerid, "D", [high[1], low[1], open[0]], lookahead=barmerge.lookahead_off)
+    [pwh, pwl]      = request.security(syminfo.tickerid, "W", [high[1], low[1]], lookahead=barmerge.lookahead_off)
+    
+    if na(linePDH)
+        linePDH := line.new(bar_index - 40, pdh, bar_index + 15, pdh, color=color.red, width=1, extend=extend.right)
+        linePDL := line.new(bar_index - 40, pdl, bar_index + 15, pdl, color=color.green, width=1, extend=extend.right)
+        linePWH := line.new(bar_index - 40, pwh, bar_index + 15, pwh, color=color.maroon, width=2, extend=extend.right)
+        linePWL := line.new(bar_index - 40, pwl, bar_index + 15, pwl, color=color.teal, width=2, extend=extend.right)
+        lineDO  := line.new(bar_index - 40, pdo, bar_index + 15, pdo, color=color.gray, style=line.style_dashed, extend=extend.right)
+        
+        lblPDH  := label.new(bar_index + 15, pdh, "PDH", style=label.style_label_left, color=color.new(color.white,100), textcolor=color.red, size=size.tiny)
+        lblPDL  := label.new(bar_index + 15, pdl, "PDL", style=label.style_label_left, color=color.new(color.white,100), textcolor=color.green, size=size.tiny)
+    else
+        line.set_xy1(linePDH, bar_index - 40, pdh), line.set_xy2(linePDH, bar_index + 15, pdh)
+        line.set_xy1(linePDL, bar_index - 40, pdl), line.set_xy2(linePDL, bar_index + 15, pdl)
+        line.set_xy1(linePWH, bar_index - 40, pwh), line.set_xy2(linePWH, bar_index + 15, pwh)
+        line.set_xy1(linePWL, bar_index - 40, pwl), line.set_xy2(linePWL, bar_index + 15, pwl)
+        line.set_xy1(lineDO,  bar_index - 40, pdo), line.set_xy2(lineDO,  bar_index + 15, pdo)
+        label.set_xy(lblPDH, bar_index + 15, pdh), label.set_xy(lblPDL, bar_index + 15, pdl)
+
+// ══════════════════════════════════════════════════════════════════
+//  9. TRIPLE-TIMEFRAME TREND & INSTITUTIONAL TRADE MANAGER
+// ══════════════════════════════════════════════════════════════════
+inAsia    = not na(time(timeframe.period, sessAsia, "Asia/Karachi"))
+inLondon  = not na(time(timeframe.period, sessLondon, "Asia/Karachi"))
+inNY      = not na(time(timeframe.period, sessNY, "Asia/Karachi"))
+inSilverB = not na(time(timeframe.period, sessSilverB, "Asia/Karachi"))
+
+bgcolor(showKillzones and inSilverB ? color.new(color.purple, 92) : showKillzones and inNY ? color.new(color.blue, 95) : showKillzones and inLondon ? color.new(color.teal, 95) : showKillzones and inAsia ? color.new(color.yellow, 97) : na)
+
+// Triple Timeframe Trend Hierarchy (Daily + 4H + LTF)
+[dClose, dPH, dPL]   = request.security(syminfo.tickerid, "D", [close[1], ta.pivothigh(high, 3, 3)[1], ta.pivotlow(low, 3, 3)[1]], lookahead=barmerge.lookahead_off)
+[h4Close, h4PH, h4PL] = request.security(syminfo.tickerid, "240", [close[1], ta.pivothigh(high, 3, 3)[1], ta.pivotlow(low, 3, 3)[1]], lookahead=barmerge.lookahead_off)
+
+int htfBullCount = (not na(dPH) and dClose > dPH ? 1 : 0) + (not na(h4PH) and h4Close > h4PH ? 1 : 0) + (bias == "bullish" ? 1 : 0)
+int htfBearCount = (not na(dPL) and dClose < dPL ? 1 : 0) + (not na(h4PL) and h4Close < h4PL ? 1 : 0) + (bias == "bearish" ? 1 : 0)
+
+string htfBias = htfBullCount >= 2 ? "Bullish" : htfBearCount >= 2 ? "Bearish" : "Neutral"
+
+eqLevel    = not na(dealingRangeHigh) and not na(dealingRangeLow) ? (dealingRangeHigh + dealingRangeLow) / 2 : close
+inDiscount = close < eqLevel
+inPremium  = close > eqLevel
+
+// Dynamic Feature Normalized Weighting Engine
+int confluenceScore = 0
+if (fsmDir == DIR_LONG and htfBias == "Bullish") or (fsmDir == DIR_SHORT and htfBias == "Bearish")
+    confluenceScore += 35
+if ev_bullSweep or ev_bearSweep
+    confluenceScore += 25
+if ev_bullMSS or ev_bearMSS or ev_bullCISD or ev_bearCISD
+    confluenceScore += 15
+if (fsmDir == DIR_LONG and inDiscount) or (fsmDir == DIR_SHORT and inPremium)
+    confluenceScore += 15
+if inLondon or inNY or inSilverB
+    confluenceScore += 10
+
+// Execution Transition
+if fsmState == FSM_RETRACE and not stateChangedThisBar and (confluenceScore >= 75)
+    fsmState := FSM_EXECUTION
+    stateChangedThisBar := true
+
+// Active Trade Initialization (Frozen Setup Sweep Price Used)
+if fsmState == FSM_EXECUTION and not activeTrade.active and barstate.isconfirmed
+    if fsmDir == DIR_LONG and inDiscount
+        frozenSL = setupSweepPrice
+        riskP    = math.abs(close - frozenSL)
+        pTpP     = close + riskP * 2.0 // Partial TP at 1:2 RR
+        fTpP     = nz(dealingRangeHigh, lastPH)
+        activeTrade := Trade.new(DIR_LONG, close, frozenSL, pTpP, fTpP, bar_index, true, false, false, "OPEN")
+        label.new(bar_index, low, "★ FSM LONG SETUP (" + str.tostring(confluenceScore) + "%)\nSL: " + str.tostring(frozenSL, "#.##") + " | P.TP (1:2): " + str.tostring(pTpP, "#.##") + " | F.TP: " + str.tostring(fTpP, "#.##"), style=label.style_label_up, color=bullColor, textcolor=color.white, size=size.normal)
+    else if fsmDir == DIR_SHORT and inPremium
+        frozenSL2 = setupSweepPrice
+        riskP2    = math.abs(frozenSL2 - close)
+        pTpP2     = close - riskP2 * 2.0 // Partial TP at 1:2 RR
+        fTpP2     = nz(dealingRangeLow, lastPL)
+        activeTrade := Trade.new(DIR_SHORT, close, frozenSL2, pTpP2, fTpP2, bar_index, true, false, false, "OPEN")
+        label.new(bar_index, high, "★ FSM SHORT SETUP (" + str.tostring(confluenceScore) + "%)\nSL: " + str.tostring(frozenSL2, "#.##") + " | P.TP (1:2): " + str.tostring(pTpP2, "#.##") + " | F.TP: " + str.tostring(fTpP2, "#.##"), style=label.style_label_down, color=bearColor, textcolor=color.white, size=size.normal)
+
+// Trade Manager: Exits, Partial TP & Break-Even Shifts
+if activeTrade.active and barstate.isconfirmed
+    if activeTrade.direction == DIR_LONG
+        if not activeTrade.partialTaken and high >= activeTrade.partialTpPrice
+            activeTrade.partialTaken := true
+            activeTrade.isBreakEven  := true
+            activeTrade.slPrice      := activeTrade.entryPrice // Move SL to BE
+            label.new(bar_index, high, "PARTIAL TP HIT (1:2) ► SL MOVED TO BE", style=label.style_label_down, color=color.aqua, textcolor=color.black, size=size.tiny)
+        
+        if low <= activeTrade.slPrice
+            activeTrade.status := activeTrade.isBreakEven ? "CLOSED_BE" : "CLOSED_SL"
+            activeTrade.active := false
+            f_resetFSM()
+        else if high >= activeTrade.finalTpPrice
+            activeTrade.status := "CLOSED_TP"
+            activeTrade.active := false
+            f_resetFSM()
+
+    else if activeTrade.direction == DIR_SHORT
+        if not activeTrade.partialTaken and low <= activeTrade.partialTpPrice
+            activeTrade.partialTaken := true
+            activeTrade.isBreakEven  := true
+            activeTrade.slPrice      := activeTrade.entryPrice // Move SL to BE
+            label.new(bar_index, low, "PARTIAL TP HIT (1:2) ► SL MOVED TO BE", style=label.style_label_up, color=color.aqua, textcolor=color.black, size=size.tiny)
+        
+        if high >= activeTrade.slPrice
+            activeTrade.status := activeTrade.isBreakEven ? "CLOSED_BE" : "CLOSED_SL"
+            activeTrade.active := false
+            f_resetFSM()
+        else if low <= activeTrade.finalTpPrice
+            activeTrade.status := "CLOSED_TP"
+            activeTrade.active := false
+            f_resetFSM()
+
+// Institutional Dashboard Table
+var table dash = table.new(position.top_right, 2, 7, bgcolor=color.new(color.black, 85), border_width=1, border_color=color.gray)
+
+if showDashboard and barstate.islast
+    table.cell(dash, 0, 0, "FSM Engine State", text_color=color.white, bgcolor=color.new(color.gray, 70))
+    table.cell(dash, 1, 0, f_getFsmStateName(fsmState), text_color=fsmState == FSM_EXECUTION ? bullColor : fsmState == FSM_IDLE ? color.gray : color.orange)
+
+    table.cell(dash, 0, 1, "FSM Structure Bias", text_color=color.white, bgcolor=color.new(color.gray, 70))
+    table.cell(dash, 1, 1, str.tostring(bias), text_color=bias == "bullish" ? bullColor : bearColor)
+    
+    table.cell(dash, 0, 2, "Triple Trend (D/4H/LTF)", text_color=color.white, bgcolor=color.new(color.gray, 70))
+    table.cell(dash, 1, 2, htfBias, text_color=htfBias == "Bullish" ? bullColor : bearColor)
+    
+    table.cell(dash, 0, 3, "Dealing Range", text_color=color.white, bgcolor=color.new(color.gray, 70))
+    table.cell(dash, 1, 3, inDiscount ? "Discount Zone" : "Premium Zone", text_color=inDiscount ? bullColor : bearColor)
+    
+    table.cell(dash, 0, 4, "PKT Killzone Active", text_color=color.white, bgcolor=color.new(color.gray, 70))
+    table.cell(dash, 1, 4, inSilverB ? "NY Silver Bullet (19-20 PKT)" : inNY ? "NY Open (17-20 PKT)" : inLondon ? "London KZ (12-15 PKT)" : inAsia ? "Asia KZ (05-14 PKT)" : "Off-Hours", text_color=inSilverB or inNY or inLondon ? color.aqua : color.gray)
+    
+    table.cell(dash, 0, 5, "FSM Confluence Score", text_color=color.white, bgcolor=color.new(color.gray, 70))
+    table.cell(dash, 1, 5, str.tostring(confluenceScore) + "%", text_color=confluenceScore >= 75 ? bullColor : confluenceScore >= 45 ? color.orange : bearColor)
+
+// ══════════════════════════════════════════════════════════════════
+//  ALERTS
+// ══════════════════════════════════════════════════════════════════
+alertcondition(fsmState == FSM_EXECUTION and fsmDir == DIR_LONG and barstate.isconfirmed, "★ FSM Institutional Long Setup", "FSM ICT Long Setup Confirmed")
+alertcondition(fsmState == FSM_EXECUTION and fsmDir == DIR_SHORT and barstate.isconfirmed, "★ FSM Institutional Short Setup", "FSM ICT Short Setup Confirmed")
+alertcondition(ev_bullMSS and barstate.isconfirmed, "Bullish MSS", "Bullish MSS with Displacement")
+alertcondition(ev_bearMSS and barstate.isconfirmed, "Bearish MSS", "Bearish MSS with Displacement")
+alertcondition(ev_bullSweep and barstate.isconfirmed, "SSL Liquidity Sweep", "Sell-side Liquidity Swept")
+alertcondition(ev_bearSweep and barstate.isconfirmed, "BSL Liquidity Sweep", "Buy-side Liquidity Swept")
