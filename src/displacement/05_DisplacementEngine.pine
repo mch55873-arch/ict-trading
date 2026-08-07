@@ -1,0 +1,37 @@
+//@version=6
+// PHASE 4: Displacement Engine (Quality Score, Body Ratio, Range & Volume Expansion)
+// Repository: github.com/mch55873-arch/ict-trading/src/displacement
+// Quality Guarantee: Zero Repaint, Replay-Safe, Multi-Factor Impulse Scoring
+
+// ══════════════════════════════════════════════════════════════════
+//  DISPLACEMENT EVALUATOR & QUALITY SCORING ENGINE
+// ══════════════════════════════════════════════════════════════════
+
+// Multi-factor Displacement Evaluator
+f_evaluateDisplacement(dispAtrMult, volMult, useDispFilter) =>
+    float atrVal       = ta.atr(14)
+    float avgVol       = ta.sma(volume, 20)
+    bool  isVolExp     = volume > avgVol * volMult
+    
+    float bodyVal      = math.abs(close - open)
+    float candleRange  = high - low
+    float bodyRatio    = candleRange > 0 ? bodyVal / candleRange : 0.0
+    
+    float prevRangeMax = math.max(high[1] - low[1], high[2] - low[2])
+    bool  isRangeExp   = candleRange > prevRangeMax
+    bool  isImpulse    = isRangeExp and bodyRatio >= 0.60
+    
+    bool  isDisplace   = not useDispFilter or (bodyVal > atrVal * dispAtrMult and isImpulse and isVolExp)
+    
+    // Quality Score Calculation (0.0 to 100.0)
+    float qualityScore = 0.0
+    if isDisplace
+        qualityScore := 50.0 // Base score
+        if bodyRatio >= 0.75
+            qualityScore += 20.0
+        if isVolExp
+            qualityScore += 15.0
+        if isRangeExp
+            qualityScore += 15.0
+
+    [isDisplace, qualityScore]
