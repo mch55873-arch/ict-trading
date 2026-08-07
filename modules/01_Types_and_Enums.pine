@@ -78,7 +78,8 @@ var int   lastCisdBar         = na
 
 var Trade activeTrade = Trade.new(DIR_NONE, na, na, na, na, na, false, false, false, "NONE")
 
-f_resetFSM() =>
+bool resetFSM = false
+if resetFSM
     fsmState            := FSM_IDLE
     fsmDir              := DIR_NONE
     fsmStartBar         := na

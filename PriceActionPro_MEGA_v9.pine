@@ -257,26 +257,16 @@ var int fsmStartBar = na
 
 var InstitutionalTrade activeTrade = InstitutionalTrade.new(DIR_NONE, na, na, na, na, na, na, TRADE_STAGE_IDLE, false, "NONE")
 
-f_resetFSM() =>
-    fsmState            := FSM_IDLE
-    fsmDir              := DIR_NONE
-    fsmStartBar         := na
-    setupSweepPrice     := na
-    bearLegClusterTop   := na
-    bullLegClusterBot   := na
-    lastSweepBar        := na
-    lastDisplacementBar := na
-    lastMssBar          := na
-    lastCisdBar         := na
+bool resetFSM = false
 
 if fsmState != FSM_IDLE and not na(fsmStartBar) and (bar_index - fsmStartBar > fsmTimeoutBars) and not activeTrade.active
-    f_resetFSM()
+    resetFSM := true
 
 if fsmState != FSM_IDLE and not activeTrade.active
     if fsmDir == DIR_LONG and ev_bearSweep
-        f_resetFSM()
+        resetFSM := true
     else if fsmDir == DIR_SHORT and ev_bullSweep
-        f_resetFSM()
+        resetFSM := true
 
 var bool stateChangedThisBar = false
 stateChangedThisBar := false
@@ -514,12 +504,12 @@ if activeTrade.active and barstate.isconfirmed
             activeTrade.stage     := TRADE_STAGE_CLOSED
             activeTrade.active    := false
             activeTrade.statusStr := activeTrade.slPrice == activeTrade.entryPrice ? "CLOSED_BE" : "CLOSED_SL"
-            f_resetFSM()
+            resetFSM              := true
         else if high >= activeTrade.tp3Price
             activeTrade.stage     := TRADE_STAGE_CLOSED
             activeTrade.active    := false
             activeTrade.statusStr := "CLOSED_TP3_FINAL"
-            f_resetFSM()
+            resetFSM              := true
 
     else if activeTrade.direction == DIR_SHORT
         if activeTrade.stage == TRADE_STAGE_OPEN and low <= activeTrade.tp1Price
@@ -537,12 +527,24 @@ if activeTrade.active and barstate.isconfirmed
             activeTrade.stage     := TRADE_STAGE_CLOSED
             activeTrade.active    := false
             activeTrade.statusStr := activeTrade.slPrice == activeTrade.entryPrice ? "CLOSED_BE" : "CLOSED_SL"
-            f_resetFSM()
+            resetFSM              := true
         else if low <= activeTrade.tp3Price
             activeTrade.stage     := TRADE_STAGE_CLOSED
             activeTrade.active    := false
             activeTrade.statusStr := "CLOSED_TP3_FINAL"
-            f_resetFSM()
+            resetFSM              := true
+
+if resetFSM
+    fsmState            := FSM_IDLE
+    fsmDir              := DIR_NONE
+    fsmStartBar         := na
+    setupSweepPrice     := na
+    bearLegClusterTop   := na
+    bullLegClusterBot   := na
+    lastSweepBar        := na
+    lastDisplacementBar := na
+    lastMssBar          := na
+    lastCisdBar         := na
 
 // ══════════════════════════════════════════════════════════════════
 //  10. REALTIME DEBUG DASHBOARD & ALERTS
