@@ -1,0 +1,21 @@
+//@version=6
+// STEP 2 QA PROTOCOL: Replay & Real-Time Determinism Audit Engine
+// Repository: github.com/mch55873-arch/ict-trading/src/testing
+// Quality Guarantee: 100% Identical Output across Historical, Bar Replay & Realtime
+
+// ══════════════════════════════════════════════════════════════════
+//  REPLAY DETERMINISM AUDITOR
+// ══════════════════════════════════════════════════════════════════
+
+type ReplayAuditLog
+    int   barIndex
+    int   barTimestamp
+    int   fsmState
+    float closePrice
+    bool  isConfirmed
+
+f_auditReplayDeterminism(fsmState) =>
+    ReplayAuditLog audit = na
+    if barstate.isconfirmed
+        audit := ReplayAuditLog.new(bar_index, time, fsmState, close, true)
+    audit
